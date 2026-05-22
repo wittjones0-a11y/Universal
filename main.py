@@ -110,12 +110,20 @@ async def on_ready():
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
     """Log slash command failures so Railway logs show the real issue."""
-    logger.error(f"Slash command error: {error}", exc_info=error)
+    logger.error("Slash command error: %s", error, exc_info=error)
+
+    if isinstance(error, app_commands.CommandInvokeError) and error.original:
+        error = error.original
+
     message = "An error occurred while running this command."
     if isinstance(error, app_commands.CommandOnCooldown):
         message = f"Command on cooldown. Try again in {error.retry_after:.0f}s."
     elif isinstance(error, app_commands.MissingPermissions):
         message = "You do not have permission to use this command."
+    elif isinstance(error, discord.Forbidden):
+        message = "I lack permission for that action. Check my role and permissions."
+    elif isinstance(error, discord.HTTPException):
+        message = f"Discord error: {error.text or 'request failed'}"
 
     try:
         if interaction.response.is_done():
