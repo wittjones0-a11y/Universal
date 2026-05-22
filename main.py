@@ -31,6 +31,13 @@ intents.moderation = True
 
 bot = commands.Bot(command_prefix="/", intents=intents, help_command=None)
 
+# Commands that must defer immediately (before handler runs)
+_DEFER_COMMANDS = frozenset({
+    "warn", "mute", "unmute", "kick", "ban", "unban", "warnings", "modlog",
+    "logs", "logsetup", "setuplogs",
+})
+_EPHEMERAL_DEFER = frozenset({"modlog", "logs", "logsetup", "setuplogs"})
+
 
 def start_health_server():
     """Keep Railway happy by listening on PORT (prevents restart loops)."""
@@ -56,21 +63,6 @@ def _tree_command_names(guild: discord.Object = None) -> list[str]:
     return sorted(cmd.name for cmd in bot.tree.get_commands(guild=guild))
 
 
-async def _clear_global_commands_api():
-    """Remove stale global slash commands (they can override broken guild copies)."""
-    if not bot.application_id:
-        logger.warning("application_id not ready — skip clearing global commands")
-        return
-    try:
-        existing = await bot.http.get_global_commands(bot.application_id)
-        for cmd in existing:
-            await bot.http.delete_global_command(bot.application_id, cmd["id"])
-        if existing:
-            logger.info("Cleared %s stale global command(s) from Discord", len(existing))
-    except Exception as e:
-        logger.warning("Could not clear global commands: %s", e)
-
-
 async def sync_slash_commands():
     """Register slash commands with Discord."""
     if os.getenv("SYNC_COMMANDS", "true").lower() not in ("1", "true", "yes"):
@@ -81,7 +73,7 @@ async def sync_slash_commands():
     logger.info("Local command tree has %s command(s): %s", len(local_commands), local_commands)
 
     expected = {
-        "help", "warn", "mute", "unmute", "kick", "ban", "unban", "warnings", "modlog",
+        "help", "ping", "warn", "mute", "unmute", "kick", "ban", "unban", "warnings", "modlog",
         "verify", "verified", "verificationsetup", "logs", "logsetup", "setuplogs", "botstatus",
     }
     missing = expected - set(local_commands)
@@ -90,23 +82,25 @@ async def sync_slash_commands():
 
     guild_id = os.getenv("DISCORD_GUILD_ID")
     try:
+        synced = await bot.tree.sync()
+        logger.info(
+            "Synced %s global command(s): %s",
+            len(synced),
+            sorted(cmd.name for cmd in synced),
+        )
         if guild_id:
             guild = discord.Object(id=int(guild_id))
-            await _clear_global_commands_api()
             bot.tree.copy_global_to(guild=guild)
-            synced = await bot.tree.sync(guild=guild)
-            names = sorted(cmd.name for cmd in synced)
+            guild_synced = await bot.tree.sync(guild=guild)
             logger.info(
-                "Synced %s guild command(s) to guild %s: %s",
-                len(synced), guild_id, names,
+                "Synced %s guild command(s) to %s: %s",
+                len(guild_synced),
+                guild_id,
+                sorted(cmd.name for cmd in guild_synced),
             )
         else:
-            synced = await bot.tree.sync()
-            names = sorted(cmd.name for cmd in synced)
-            logger.info("Synced %s global command(s): %s", len(synced), names)
             logger.info(
-                "Global commands can take up to 1 hour to appear. "
-                "Set DISCORD_GUILD_ID in Railway for instant updates."
+                "Tip: set DISCORD_GUILD_ID in Railway for faster command updates in your server."
             )
     except discord.HTTPException as e:
         logger.error("Failed to sync commands (HTTP %s): %s", e.status, e.text, exc_info=True)
@@ -120,32 +114,83 @@ async def load_cogs():
     """Load all cogs from the cogs directory."""
     cogs_dir = BASE_DIR / "cogs"
     if not cogs_dir.is_dir():
-        logger.error(f"Cogs directory not found: {cogs_dir}")
-        return
+        raise RuntimeError(f"Cogs directory not found: {cogs_dir}")
 
+    failed = []
     for path in sorted(cogs_dir.glob("*.py")):
         if path.name.startswith("_"):
             continue
         extension = f"cogs.{path.stem}"
         try:
             await bot.load_extension(extension)
-            logger.info(f"Loaded cog: {path.name}")
+            logger.info("Loaded cog: %s", path.name)
         except Exception as e:
-            logger.error(f"Failed to load cog {path.name}: {e}", exc_info=True)
+            logger.error("Failed to load cog %s: %s", path.name, e, exc_info=True)
+            failed.append(path.name)
+
+    if failed:
+        raise RuntimeError(f"Failed to load cogs: {', '.join(failed)}")
+
+    mod_cmds = [c.name for c in bot.tree.get_commands() if c.name in (
+        "warn", "mute", "unmute", "kick", "ban", "unban", "warnings", "modlog"
+    )]
+    if len(mod_cmds) < 8:
+        raise RuntimeError(
+            f"Moderation commands missing from tree ({len(mod_cmds)}/8): {mod_cmds}"
+        )
+
+
+@bot.tree.interaction_check
+async def defer_slash_commands(interaction: discord.Interaction) -> bool:
+    """Defer before handlers run so Discord always gets a response within 3 seconds."""
+    cmd = interaction.command
+    if not cmd or cmd.name not in _DEFER_COMMANDS:
+        return True
+    if interaction.response.is_done():
+        return True
+    try:
+        await interaction.response.defer(ephemeral=cmd.name in _EPHEMERAL_DEFER)
+        logger.info("Deferred /%s for %s", cmd.name, interaction.user)
+    except discord.HTTPException as e:
+        logger.error("Failed to defer /%s: %s", cmd.name, e)
+        return False
+    return True
+
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.type == discord.InteractionType.application_command:
+        name = interaction.data.get("name", "?") if interaction.data else "?"
+        logger.info(
+            "Interaction /%s from %s in guild %s",
+            name,
+            interaction.user,
+            interaction.guild_id,
+        )
 
 
 @bot.event
 async def setup_hook():
-    """Load extensions and sync commands before connecting to Discord."""
+    """Load extensions before connecting to Discord."""
     await load_cogs()
-    await sync_slash_commands()
+
+
+_commands_synced = False
 
 
 @bot.event
 async def on_ready():
     """Called when bot is ready."""
+    global _commands_synced
     logger.info("Bot is ready! Logged in as %s", bot.user)
     logger.info("Connected to %s guild(s)", len(bot.guilds))
+
+    if not _commands_synced:
+        try:
+            await sync_slash_commands()
+            _commands_synced = True
+        except Exception as e:
+            logger.error("Command sync failed on ready: %s", e, exc_info=True)
 
     guild_id = os.getenv("DISCORD_GUILD_ID")
     if guild_id:
@@ -284,6 +329,15 @@ async def on_command_error(ctx, error):
         await ctx.send(embed=embed)
 
 
+@bot.tree.command(name="ping", description="Test if the bot responds to slash commands")
+async def ping(interaction: discord.Interaction):
+    latency_ms = round(bot.latency * 1000)
+    await interaction.response.send_message(
+        f"Pong! Latency: {latency_ms}ms — bot is online and responding.",
+        ephemeral=True,
+    )
+
+
 @bot.tree.command(name="botstatus", description="Show bot diagnostics (admin)")
 @app_commands.default_permissions(administrator=True)
 async def botstatus(interaction: discord.Interaction):
@@ -367,7 +421,7 @@ async def help_command(interaction: discord.Interaction):
 
     embed.add_field(
         name="Diagnostics",
-        value="/botstatus - Check bot permissions and command sync (Admin)",
+        value="/ping - Test bot response\n/botstatus - Check permissions and sync (Admin)",
         inline=False,
     )
 

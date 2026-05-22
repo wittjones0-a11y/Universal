@@ -1,4 +1,5 @@
 """Database management for bot logging and verification."""
+import asyncio
 import sqlite3
 import json
 from datetime import datetime
@@ -8,8 +9,14 @@ from config import DATABASE_PATH
 class Database:
     def __init__(self, db_path: str = None):
         self.db_path = db_path or DATABASE_PATH
-        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+        db_dir = Path(self.db_path).parent
+        if str(db_dir) not in ("", "."):
+            db_dir.mkdir(parents=True, exist_ok=True)
         self.init_db()
+
+    async def run(self, func, *args, **kwargs):
+        """Run a blocking DB call without freezing the Discord event loop."""
+        return await asyncio.to_thread(func, *args, **kwargs)
 
     def get_connection(self):
         """Get a database connection."""

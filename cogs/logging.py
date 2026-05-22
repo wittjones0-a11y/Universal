@@ -19,13 +19,14 @@ class Logging(commands.Cog):
         if message.content.startswith("/"):
             return
 
-        self.db.add_user(message.author.id, message.guild.id)
-        self.db.log_message(
+        await self.db.run(self.db.add_user, message.author.id, message.guild.id)
+        await self.db.run(
+            self.db.log_message,
             message.author.id,
             message.guild.id,
             message.channel.id,
             message.id,
-            message.content
+            message.content,
         )
 
     @commands.Cog.listener()
@@ -96,21 +97,18 @@ class Logging(commands.Cog):
     async def view_logs(self, interaction: discord.Interaction, member: discord.Member = None):
         """View message logs for a user."""
         if not interaction.user.guild_permissions.moderate_members:
-            await interaction.response.send_message("❌ You don't have permission to use this command!", ephemeral=True)
+            await interaction.followup.send(
+                "You don't have permission to use this command.", ephemeral=True
+            )
             return
-
-        # Defer reply to avoid "The application did not respond" timeout
-        try:
-            await interaction.response.defer(ephemeral=True)
-        except Exception:
-            # already responded or deferred
-            pass
 
         if member is None:
             member = interaction.user
 
         # Fetch recent message logs from the database
-        logs = self.db.get_message_logs(member.id, interaction.guild.id, limit=10)
+        logs = await self.db.run(
+            self.db.get_message_logs, member.id, interaction.guild.id, 10
+        )
 
         embed = discord.Embed(
             title=f"📨 Activity Logs - {member}",
@@ -156,20 +154,16 @@ class Logging(commands.Cog):
     async def _do_log_setup(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
         """Set the guild log channel where audit messages will be sent."""
         if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ You must be an administrator to use this command!", ephemeral=True)
+            await interaction.followup.send(
+                "You must be an administrator to use this command.", ephemeral=True
+            )
             return
-
-        # Defer immediately to avoid timeouts
-        try:
-            await interaction.response.defer(ephemeral=True)
-        except Exception:
-            pass
 
         if channel is None:
             channel = interaction.channel
 
         try:
-            self.db.set_log_channel(interaction.guild.id, channel.id)
+            await self.db.run(self.db.set_log_channel, interaction.guild.id, channel.id)
 
             embed = discord.Embed(
                 title="✅ Log Channel Set",

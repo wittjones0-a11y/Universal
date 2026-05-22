@@ -76,11 +76,6 @@ class Moderation(commands.Cog):
         member: discord.Member,
         reason: str = "No reason provided",
     ):
-        try:
-            await interaction.response.defer()
-        except discord.HTTPException:
-            return
-
         if member.bot:
             await self._followup(interaction, content="You cannot warn bots.", ephemeral=True)
             return
@@ -95,12 +90,14 @@ class Moderation(commands.Cog):
             return
 
         try:
-            self.db.add_user(member.id, interaction.guild.id)
-            warning_count = self.db.add_warning(
-                member.id, interaction.guild.id, reason, interaction.user.id
+            await self.db.run(self.db.add_user, member.id, interaction.guild.id)
+            warning_count = await self.db.run(
+                self.db.add_warning,
+                member.id, interaction.guild.id, reason, interaction.user.id,
             )
-            self.db.log_moderation(
-                member.id, interaction.guild.id, "warn", reason, interaction.user.id
+            await self.db.run(
+                self.db.log_moderation,
+                member.id, interaction.guild.id, "warn", reason, interaction.user.id,
             )
         except Exception as e:
             logger.error("Warn DB error: %s", e, exc_info=True)
@@ -149,11 +146,6 @@ class Moderation(commands.Cog):
         duration: int = 300,
         reason: str = "No reason provided",
     ):
-        try:
-            await interaction.response.defer()
-        except discord.HTTPException:
-            return
-
         if member.bot:
             await self._followup(interaction, content="You cannot mute bots.", ephemeral=True)
             return
@@ -189,10 +181,11 @@ class Moderation(commands.Cog):
     ):
         mute_until = datetime.utcnow() + timedelta(seconds=duration)
         try:
-            self.db.add_user(member.id, interaction.guild.id)
-            self.db.set_muted(member.id, interaction.guild.id, mute_until)
-            self.db.log_moderation(
-                member.id, interaction.guild.id, "mute", reason, interaction.user.id
+            await self.db.run(self.db.add_user, member.id, interaction.guild.id)
+            await self.db.run(self.db.set_muted, member.id, interaction.guild.id, mute_until)
+            await self.db.run(
+                self.db.log_moderation,
+                member.id, interaction.guild.id, "mute", reason, interaction.user.id,
             )
         except Exception as e:
             logger.error("Mute DB error: %s", e, exc_info=True)
@@ -238,11 +231,6 @@ class Moderation(commands.Cog):
     @app_commands.default_permissions(moderate_members=True)
     @app_commands.guild_only()
     async def unmute_user(self, interaction: discord.Interaction, member: discord.Member):
-        try:
-            await interaction.response.defer()
-        except discord.HTTPException:
-            return
-
         if not interaction.user.guild_permissions.moderate_members:
             await self._followup(
                 interaction, content="You need **Moderate Members** permission.", ephemeral=True
@@ -254,9 +242,10 @@ class Moderation(commands.Cog):
             return
 
         try:
-            self.db.set_muted(member.id, interaction.guild.id)
-            self.db.log_moderation(
-                member.id, interaction.guild.id, "unmute", moderator_id=interaction.user.id
+            await self.db.run(self.db.set_muted, member.id, interaction.guild.id)
+            await self.db.run(
+                self.db.log_moderation,
+                member.id, interaction.guild.id, "unmute", moderator_id=interaction.user.id,
             )
         except Exception as e:
             await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)
@@ -297,11 +286,6 @@ class Moderation(commands.Cog):
         member: discord.Member,
         reason: str = "No reason provided",
     ):
-        try:
-            await interaction.response.defer()
-        except discord.HTTPException:
-            return
-
         if member.bot:
             await self._followup(interaction, content="You cannot kick bots.", ephemeral=True)
             return
@@ -323,8 +307,9 @@ class Moderation(commands.Cog):
             return
 
         try:
-            self.db.log_moderation(
-                member.id, interaction.guild.id, "kick", reason, interaction.user.id
+            await self.db.run(
+                self.db.log_moderation,
+                member.id, interaction.guild.id, "kick", reason, interaction.user.id,
             )
         except Exception as e:
             await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)
@@ -373,11 +358,6 @@ class Moderation(commands.Cog):
         member: discord.Member,
         reason: str = "No reason provided",
     ):
-        try:
-            await interaction.response.defer()
-        except discord.HTTPException:
-            return
-
         if member.bot:
             await self._followup(interaction, content="You cannot ban bots.", ephemeral=True)
             return
@@ -399,8 +379,9 @@ class Moderation(commands.Cog):
             return
 
         try:
-            self.db.log_moderation(
-                member.id, interaction.guild.id, "ban", reason, interaction.user.id
+            await self.db.run(
+                self.db.log_moderation,
+                member.id, interaction.guild.id, "ban", reason, interaction.user.id,
             )
         except Exception as e:
             await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)
@@ -444,11 +425,6 @@ class Moderation(commands.Cog):
     @app_commands.default_permissions(ban_members=True)
     @app_commands.guild_only()
     async def unban_user(self, interaction: discord.Interaction, user_id: str):
-        try:
-            await interaction.response.defer()
-        except discord.HTTPException:
-            return
-
         if not interaction.user.guild_permissions.ban_members:
             await self._followup(
                 interaction, content="You need **Ban Members** permission.", ephemeral=True
@@ -473,8 +449,9 @@ class Moderation(commands.Cog):
         try:
             user = await self.bot.fetch_user(user_id_int)
             await interaction.guild.unban(user)
-            self.db.log_moderation(
-                user_id_int, interaction.guild.id, "unban", moderator_id=interaction.user.id
+            await self.db.run(
+                self.db.log_moderation,
+                user_id_int, interaction.guild.id, "unban", moderator_id=interaction.user.id,
             )
             await self._followup(interaction, content=f"{user} has been unbanned.")
         except discord.NotFound:
@@ -497,13 +474,12 @@ class Moderation(commands.Cog):
     @app_commands.guild_only()
     async def get_warnings(self, interaction: discord.Interaction, member: discord.Member):
         try:
-            await interaction.response.defer()
-        except discord.HTTPException:
-            return
-
-        try:
-            warning_count = self.db.get_warnings(member.id, interaction.guild.id)
-            logs = self.db.get_user_logs(member.id, interaction.guild.id, 5)
+            warning_count = await self.db.run(
+                self.db.get_warnings, member.id, interaction.guild.id
+            )
+            logs = await self.db.run(
+                self.db.get_user_logs, member.id, interaction.guild.id, 5
+            )
         except Exception as e:
             logger.error("Warnings DB error: %s", e, exc_info=True)
             await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)
@@ -530,11 +506,6 @@ class Moderation(commands.Cog):
     @app_commands.default_permissions(moderate_members=True)
     @app_commands.guild_only()
     async def modlog(self, interaction: discord.Interaction, member: discord.Member):
-        try:
-            await interaction.response.defer(ephemeral=True)
-        except discord.HTTPException:
-            return
-
         if not interaction.user.guild_permissions.moderate_members:
             await self._followup(
                 interaction, content="You need **Moderate Members** permission.", ephemeral=True
@@ -542,7 +513,9 @@ class Moderation(commands.Cog):
             return
 
         try:
-            logs = self.db.get_user_logs(member.id, interaction.guild.id, 10)
+            logs = await self.db.run(
+                self.db.get_user_logs, member.id, interaction.guild.id, 10
+            )
         except Exception as e:
             logger.error("Modlog DB error: %s", e, exc_info=True)
             await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)

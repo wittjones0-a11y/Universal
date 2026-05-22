@@ -10,10 +10,16 @@ load_dotenv(BASE_DIR / ".env")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "your_token_here")
 
 # SQLite path (use DATABASE_PATH — Railway sets DATABASE_URL for Postgres addons)
-DATABASE_PATH = os.getenv(
-    "DATABASE_PATH",
-    str(BASE_DIR / "data" / "bot_data.db"),
-)
+def _default_database_path() -> str:
+    if os.getenv("DATABASE_PATH"):
+        return os.getenv("DATABASE_PATH")
+    # Railway containers: use /tmp if data/ is missing or read-only
+    if os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PROJECT_ID"):
+        return "/tmp/bot_data.db"
+    return str(BASE_DIR / "data" / "bot_data.db")
+
+
+DATABASE_PATH = _default_database_path()
 
 # Moderation Settings
 MODERATION_CONFIG = {
