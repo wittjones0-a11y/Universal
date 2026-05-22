@@ -1,6 +1,5 @@
 """Moderation commands cog."""
 import logging
-from typing import Optional
 
 import discord
 from discord import app_commands
@@ -15,7 +14,11 @@ logger = logging.getLogger(__name__)
 class Moderation(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self.db = Database()
+        try:
+            self.db = Database()
+        except Exception as e:
+            logger.error("Database init failed: %s", e, exc_info=True)
+            raise
 
     async def _reply(
         self,
@@ -51,6 +54,7 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="warn", description="Warn a user")
     @app_commands.describe(member="User to warn", reason="Reason for warning")
+    @app_commands.default_permissions(moderate_members=True)
     @app_commands.guild_only()
     async def warn_user(
         self,
@@ -73,13 +77,20 @@ class Moderation(commands.Cog):
 
         await interaction.response.defer()
 
-        self.db.add_user(member.id, interaction.guild.id)
-        warning_count = self.db.add_warning(
-            member.id, interaction.guild.id, reason, interaction.user.id
-        )
-        self.db.log_moderation(
-            member.id, interaction.guild.id, "warn", reason, interaction.user.id
-        )
+        try:
+            self.db.add_user(member.id, interaction.guild.id)
+            warning_count = self.db.add_warning(
+                member.id, interaction.guild.id, reason, interaction.user.id
+            )
+            self.db.log_moderation(
+                member.id, interaction.guild.id, "warn", reason, interaction.user.id
+            )
+        except Exception as e:
+            logger.error("Warn DB error: %s", e, exc_info=True)
+            await interaction.followup.send(
+                f"Database error while warning: {e}", ephemeral=True
+            )
+            return
 
         embed = discord.Embed(
             title="User Warned",
@@ -114,6 +125,7 @@ class Moderation(commands.Cog):
         duration="Duration in seconds (default 300)",
         reason="Reason for mute",
     )
+    @app_commands.default_permissions(moderate_members=True)
     @app_commands.guild_only()
     async def mute_user(
         self,
@@ -196,6 +208,7 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="unmute", description="Unmute a user")
     @app_commands.describe(member="User to unmute")
+    @app_commands.default_permissions(moderate_members=True)
     @app_commands.guild_only()
     async def unmute_user(self, interaction: discord.Interaction, member: discord.Member):
         if not interaction.user.guild_permissions.moderate_members:
@@ -239,6 +252,7 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="kick", description="Kick a user from the server")
     @app_commands.describe(member="User to kick", reason="Reason for kick")
+    @app_commands.default_permissions(kick_members=True)
     @app_commands.guild_only()
     async def kick_user(
         self,
@@ -304,6 +318,7 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="ban", description="Ban a user from the server")
     @app_commands.describe(member="User to ban", reason="Reason for ban")
+    @app_commands.default_permissions(ban_members=True)
     @app_commands.guild_only()
     async def ban_user(
         self,
@@ -369,6 +384,7 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="unban", description="Unban a user by ID")
     @app_commands.describe(user_id="ID of user to unban")
+    @app_commands.default_permissions(ban_members=True)
     @app_commands.guild_only()
     async def unban_user(self, interaction: discord.Interaction, user_id: str):
         if not interaction.user.guild_permissions.ban_members:
@@ -410,14 +426,19 @@ class Moderation(commands.Cog):
             )
 
     @app_commands.command(name="warnings", description="View warnings for a user")
-    @app_commands.describe(member="User to check (leave empty for yourself)")
+    @app_commands.describe(member="User to check")
     @app_commands.guild_only()
-    async def get_warnings(
-        self, interaction: discord.Interaction, member: Optional[discord.Member] = None
-    ):
-        target = member or interaction.user
-        warning_count = self.db.get_warnings(target.id, interaction.guild.id)
-        logs = self.db.get_user_logs(target.id, interaction.guild.id, 5)
+    async def get_warnings(self, interaction: discord.Interaction, member: discord.Member):
+        target = member
+        try:
+            warning_count = self.db.get_warnings(target.id, interaction.guild.id)
+            logs = self.db.get_user_logs(target.id, interaction.guild.id, 5)
+        except Exception as e:
+            logger.error("Warnings DB error: %s", e, exc_info=True)
+            await self._reply(
+                interaction, content=f"Database error: {e}", ephemeral=True
+            )
+            return
 
         embed = discord.Embed(
             title=f"Warnings for {target}",
@@ -438,13 +459,19 @@ class Moderation(commands.Cog):
 
     @app_commands.command(name="modlog", description="View moderation log for a user")
     @app_commands.describe(member="User to check")
+    @app_commands.default_permissions(moderate_members=True)
     @app_commands.guild_only()
     async def modlog(self, interaction: discord.Interaction, member: discord.Member):
         if not interaction.user.guild_permissions.moderate_members:
             await self._reply(interaction, content="You need **Moderate Members** permission.", ephemeral=True)
             return
 
-        logs = self.db.get_user_logs(member.id, interaction.guild.id, 10)
+        try:
+            logs = self.db.get_user_logs(member.id, interaction.guild.id, 10)
+        except Exception as e:
+            logger.error("Modlog DB error: %s", e, exc_info=True)
+            await self._reply(interaction, content=f"Database error: {e}", ephemeral=True)
+            return
 
         embed = discord.Embed(
             title=f"Moderation Log — {member}",

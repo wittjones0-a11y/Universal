@@ -52,20 +52,67 @@ def start_health_server():
     logger.info(f"Health server listening on 0.0.0.0:{port}")
 
 
+def _tree_command_names(guild: discord.Object = None) -> list[str]:
+    return sorted(cmd.name for cmd in bot.tree.get_commands(guild=guild))
+
+
+async def _clear_global_commands_api():
+    """Remove stale global slash commands (they can override broken guild copies)."""
+    if not bot.application_id:
+        logger.warning("application_id not ready — skip clearing global commands")
+        return
+    try:
+        existing = await bot.http.get_global_commands(bot.application_id)
+        for cmd in existing:
+            await bot.http.delete_global_command(bot.application_id, cmd["id"])
+        if existing:
+            logger.info("Cleared %s stale global command(s) from Discord", len(existing))
+    except Exception as e:
+        logger.warning("Could not clear global commands: %s", e)
+
+
 async def sync_slash_commands():
     """Register slash commands with Discord."""
+    if os.getenv("SYNC_COMMANDS", "true").lower() not in ("1", "true", "yes"):
+        logger.info("SYNC_COMMANDS disabled — skipping command sync")
+        return
+
+    local_commands = _tree_command_names()
+    logger.info("Local command tree has %s command(s): %s", len(local_commands), local_commands)
+
+    expected = {
+        "help", "warn", "mute", "unmute", "kick", "ban", "unban", "warnings", "modlog",
+        "verify", "verified", "verificationsetup", "logs", "logsetup", "setuplogs", "botstatus",
+    }
+    missing = expected - set(local_commands)
+    if missing:
+        logger.error("Missing commands in tree (cog load failed?): %s", sorted(missing))
+
     guild_id = os.getenv("DISCORD_GUILD_ID")
     try:
         if guild_id:
             guild = discord.Object(id=int(guild_id))
+            await _clear_global_commands_api()
             bot.tree.copy_global_to(guild=guild)
             synced = await bot.tree.sync(guild=guild)
-            logger.info(f"Synced {len(synced)} guild command(s) to guild {guild_id}")
+            names = sorted(cmd.name for cmd in synced)
+            logger.info(
+                "Synced %s guild command(s) to guild %s: %s",
+                len(synced), guild_id, names,
+            )
         else:
             synced = await bot.tree.sync()
-            logger.info(f"Synced {len(synced)} global command(s)")
+            names = sorted(cmd.name for cmd in synced)
+            logger.info("Synced %s global command(s): %s", len(synced), names)
+            logger.info(
+                "Global commands can take up to 1 hour to appear. "
+                "Set DISCORD_GUILD_ID in Railway for instant updates."
+            )
+    except discord.HTTPException as e:
+        logger.error("Failed to sync commands (HTTP %s): %s", e.status, e.text, exc_info=True)
+        raise
     except Exception as e:
-        logger.error(f"Failed to sync commands: {e}", exc_info=True)
+        logger.error("Failed to sync commands: %s", e, exc_info=True)
         raise
 
 
@@ -97,8 +144,44 @@ async def setup_hook():
 @bot.event
 async def on_ready():
     """Called when bot is ready."""
-    logger.info(f"Bot is ready! Logged in as {bot.user}")
-    logger.info(f"Connected to {len(bot.guilds)} guild(s)")
+    logger.info("Bot is ready! Logged in as %s", bot.user)
+    logger.info("Connected to %s guild(s)", len(bot.guilds))
+
+    guild_id = os.getenv("DISCORD_GUILD_ID")
+    if guild_id:
+        target = int(guild_id)
+        in_guild = bot.get_guild(target)
+        if in_guild:
+            me = in_guild.me
+            perms = me.guild_permissions if me else None
+            logger.info(
+                "Guild sync target %s (%s) — bot perms: kick=%s ban=%s timeout=%s",
+                in_guild.name,
+                target,
+                perms.kick_members if perms else "?",
+                perms.ban_members if perms else "?",
+                perms.moderate_members if perms else "?",
+            )
+        else:
+            logger.error(
+                "DISCORD_GUILD_ID=%s but the bot is NOT in that server. "
+                "Fix the variable or invite the bot. Your servers: %s",
+                target,
+                [(g.name, g.id) for g in bot.guilds],
+            )
+
+    for guild in bot.guilds:
+        me = guild.me
+        if not me:
+            continue
+        if me.guild_permissions.moderate_members:
+            logger.info("OK %s — can moderate", guild.name)
+        else:
+            logger.warning(
+                "NO MOD PERMS in %s — enable Moderate/Kick/Ban on bot role",
+                guild.name,
+            )
+
     await bot.change_presence(
         activity=discord.Activity(
             type=discord.ActivityType.watching,
@@ -201,6 +284,51 @@ async def on_command_error(ctx, error):
         await ctx.send(embed=embed)
 
 
+@bot.tree.command(name="botstatus", description="Show bot diagnostics (admin)")
+@app_commands.default_permissions(administrator=True)
+async def botstatus(interaction: discord.Interaction):
+    """Help debug Railway / permission / command issues."""
+    if not interaction.guild:
+        await interaction.response.send_message("Use this in a server.", ephemeral=True)
+        return
+
+    guild = interaction.guild
+    me = guild.me
+    perms = me.guild_permissions if me else None
+    configured_guild = os.getenv("DISCORD_GUILD_ID", "(not set)")
+
+    lines = [
+        f"**Server:** {guild.name}",
+        f"**Server ID:** `{guild.id}`",
+        f"**DISCORD_GUILD_ID:** `{configured_guild}`",
+        f"**Bot role:** {me.top_role.name if me else 'unknown'} (position {me.top_role.position if me else '?'})",
+    ]
+    if perms:
+        lines.append(
+            "**Bot permissions:** "
+            f"Timeout={perms.moderate_members} "
+            f"Kick={perms.kick_members} "
+            f"Ban={perms.ban_members}"
+        )
+    if str(guild.id) != str(configured_guild) and configured_guild != "(not set)":
+        lines.append(
+            "⚠️ **DISCORD_GUILD_ID does not match this server.** "
+            "Set it to the Server ID above in Railway Variables, then redeploy."
+        )
+
+    tree_names = _tree_command_names()
+    mod_cmds = [c for c in tree_names if c in ("warn", "mute", "kick", "ban", "unmute", "unban", "warnings", "modlog")]
+    lines.append(f"**Moderation commands loaded:** {len(mod_cmds)}/8 — {', '.join(f'`/{c}`' for c in mod_cmds)}")
+
+    embed = discord.Embed(
+        title="Bot status",
+        description="\n".join(lines),
+        color=discord.Color.blue(),
+    )
+    embed.set_footer(text="After changing Railway variables, redeploy and wait ~30s")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 @bot.tree.command(name="help", description="Show all available commands")
 async def help_command(interaction: discord.Interaction):
     """Show help information."""
@@ -234,6 +362,12 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(
         name="Logging Commands",
         value="/logs - View activity logs\n/logsetup - Set audit log channel (Admin)",
+        inline=False,
+    )
+
+    embed.add_field(
+        name="Diagnostics",
+        value="/botstatus - Check bot permissions and command sync (Admin)",
         inline=False,
     )
 
