@@ -1,5 +1,6 @@
 """Moderation commands cog."""
 import logging
+from typing import Optional
 
 import discord
 from discord import app_commands
@@ -20,7 +21,17 @@ class Moderation(commands.Cog):
             logger.error("Database init failed: %s", e, exc_info=True)
             raise
 
-    async def _reply(
+    async def _get_bot_member(self, guild: discord.Guild) -> Optional[discord.Member]:
+        me = guild.me
+        if me is not None:
+            return me
+        try:
+            return await guild.fetch_member(self.bot.user.id)
+        except discord.HTTPException as e:
+            logger.error("Could not fetch bot member in %s: %s", guild.id, e)
+            return None
+
+    async def _followup(
         self,
         interaction: discord.Interaction,
         *,
@@ -28,7 +39,6 @@ class Moderation(commands.Cog):
         embed: discord.Embed = None,
         ephemeral: bool = False,
     ):
-        """Send via response or followup depending on whether we already replied."""
         kwargs = {}
         if content:
             kwargs["content"] = content
@@ -36,19 +46,23 @@ class Moderation(commands.Cog):
             kwargs["embed"] = embed
         if ephemeral:
             kwargs["ephemeral"] = True
+        await interaction.followup.send(**kwargs)
 
-        if interaction.response.is_done():
-            await interaction.followup.send(**kwargs)
-        else:
-            await interaction.response.send_message(**kwargs)
+    async def _bot_can_moderate(
+        self, interaction: discord.Interaction, member: discord.Member
+    ) -> Optional[str]:
+        me = await self._get_bot_member(interaction.guild)
+        if me is None:
+            return "Bot member data unavailable — try again in a moment."
 
-    def _bot_can_moderate(self, interaction: discord.Interaction, member: discord.Member) -> Optional[str]:
-        """Return an error message if the bot cannot act on the member."""
         if member.id == interaction.guild.owner_id:
             return "Cannot moderate the server owner."
-        if member.top_role >= interaction.guild.me.top_role:
+        if member.top_role >= me.top_role:
             return "I cannot moderate this user — move my role above theirs in Server Settings → Roles."
-        if member.top_role >= interaction.user.top_role and interaction.user.id != interaction.guild.owner_id:
+        if (
+            member.top_role >= interaction.user.top_role
+            and interaction.user.id != interaction.guild.owner_id
+        ):
             return "You cannot moderate a member with an equal or higher role than yours."
         return None
 
@@ -62,20 +76,23 @@ class Moderation(commands.Cog):
         member: discord.Member,
         reason: str = "No reason provided",
     ):
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException:
+            return
+
         if member.bot:
-            await self._reply(interaction, content="You cannot warn bots.", ephemeral=True)
+            await self._followup(interaction, content="You cannot warn bots.", ephemeral=True)
             return
-
         if not interaction.user.guild_permissions.moderate_members:
-            await self._reply(interaction, content="You need **Moderate Members** permission.", ephemeral=True)
+            await self._followup(
+                interaction, content="You need **Moderate Members** permission.", ephemeral=True
+            )
             return
-
-        blocked = self._bot_can_moderate(interaction, member)
+        blocked = await self._bot_can_moderate(interaction, member)
         if blocked:
-            await self._reply(interaction, content=blocked, ephemeral=True)
+            await self._followup(interaction, content=blocked, ephemeral=True)
             return
-
-        await interaction.response.defer()
 
         try:
             self.db.add_user(member.id, interaction.guild.id)
@@ -87,9 +104,7 @@ class Moderation(commands.Cog):
             )
         except Exception as e:
             logger.error("Warn DB error: %s", e, exc_info=True)
-            await interaction.followup.send(
-                f"Database error while warning: {e}", ephemeral=True
-            )
+            await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)
             return
 
         embed = discord.Embed(
@@ -100,7 +115,7 @@ class Moderation(commands.Cog):
         embed.add_field(name="Reason", value=reason)
         embed.add_field(name="Warnings", value=f"{warning_count}/3")
         embed.set_footer(text=f"Warned by {interaction.user}")
-        await interaction.followup.send(embed=embed)
+        await self._followup(interaction, embed=embed)
 
         try:
             dm_embed = discord.Embed(
@@ -134,28 +149,33 @@ class Moderation(commands.Cog):
         duration: int = 300,
         reason: str = "No reason provided",
     ):
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException:
+            return
+
         if member.bot:
-            await self._reply(interaction, content="You cannot mute bots.", ephemeral=True)
+            await self._followup(interaction, content="You cannot mute bots.", ephemeral=True)
             return
-
         if not interaction.user.guild_permissions.moderate_members:
-            await self._reply(interaction, content="You need **Moderate Members** permission.", ephemeral=True)
+            await self._followup(
+                interaction, content="You need **Moderate Members** permission.", ephemeral=True
+            )
             return
-
-        blocked = self._bot_can_moderate(interaction, member)
+        blocked = await self._bot_can_moderate(interaction, member)
         if blocked:
-            await self._reply(interaction, content=blocked, ephemeral=True)
+            await self._followup(interaction, content=blocked, ephemeral=True)
             return
 
-        if not interaction.guild.me.guild_permissions.moderate_members:
-            await self._reply(
+        me = await self._get_bot_member(interaction.guild)
+        if not me or not me.guild_permissions.moderate_members:
+            await self._followup(
                 interaction,
                 content="I need **Moderate Members** permission to timeout users.",
                 ephemeral=True,
             )
             return
 
-        await interaction.response.defer()
         await self._apply_mute(interaction, member, reason, duration, announce=True)
 
     async def _apply_mute(
@@ -167,28 +187,35 @@ class Moderation(commands.Cog):
         *,
         announce: bool = True,
     ):
-        """Apply a timeout and log it. Uses followup (caller must defer or have responded)."""
         mute_until = datetime.utcnow() + timedelta(seconds=duration)
-        self.db.add_user(member.id, interaction.guild.id)
-        self.db.set_muted(member.id, interaction.guild.id, mute_until)
-        self.db.log_moderation(
-            member.id, interaction.guild.id, "mute", reason, interaction.user.id
-        )
+        try:
+            self.db.add_user(member.id, interaction.guild.id)
+            self.db.set_muted(member.id, interaction.guild.id, mute_until)
+            self.db.log_moderation(
+                member.id, interaction.guild.id, "mute", reason, interaction.user.id
+            )
+        except Exception as e:
+            logger.error("Mute DB error: %s", e, exc_info=True)
+            if announce:
+                await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)
+            return
 
         try:
             await member.timeout(timedelta(seconds=duration), reason=reason)
         except discord.Forbidden:
             if announce:
-                await interaction.followup.send(
-                    "Could not mute — check my role position and **Moderate Members** permission.",
+                await self._followup(
+                    interaction,
+                    content="Could not mute — check my role position and **Moderate Members**.",
                     ephemeral=True,
                 )
             return
         except discord.HTTPException as e:
             logger.error("Mute failed: %s", e)
             if announce:
-                await interaction.followup.send(
-                    f"Could not mute: {e.text or 'Discord API error'}",
+                await self._followup(
+                    interaction,
+                    content=f"Could not mute: {e.text or 'Discord API error'}",
                     ephemeral=True,
                 )
             return
@@ -204,40 +231,50 @@ class Moderation(commands.Cog):
         )
         embed.add_field(name="Reason", value=reason)
         embed.set_footer(text=f"Muted by {interaction.user}")
-        await interaction.followup.send(embed=embed)
+        await self._followup(interaction, embed=embed)
 
     @app_commands.command(name="unmute", description="Unmute a user")
     @app_commands.describe(member="User to unmute")
     @app_commands.default_permissions(moderate_members=True)
     @app_commands.guild_only()
     async def unmute_user(self, interaction: discord.Interaction, member: discord.Member):
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException:
+            return
+
         if not interaction.user.guild_permissions.moderate_members:
-            await self._reply(interaction, content="You need **Moderate Members** permission.", ephemeral=True)
+            await self._followup(
+                interaction, content="You need **Moderate Members** permission.", ephemeral=True
+            )
             return
-
-        blocked = self._bot_can_moderate(interaction, member)
+        blocked = await self._bot_can_moderate(interaction, member)
         if blocked:
-            await self._reply(interaction, content=blocked, ephemeral=True)
+            await self._followup(interaction, content=blocked, ephemeral=True)
             return
 
-        await interaction.response.defer()
-
-        self.db.set_muted(member.id, interaction.guild.id)
-        self.db.log_moderation(
-            member.id, interaction.guild.id, "unmute", moderator_id=interaction.user.id
-        )
+        try:
+            self.db.set_muted(member.id, interaction.guild.id)
+            self.db.log_moderation(
+                member.id, interaction.guild.id, "unmute", moderator_id=interaction.user.id
+            )
+        except Exception as e:
+            await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)
+            return
 
         try:
             await member.timeout(None, reason="Unmuted")
         except discord.Forbidden:
-            await interaction.followup.send(
-                "Could not unmute — check my role position and **Moderate Members** permission.",
+            await self._followup(
+                interaction,
+                content="Could not unmute — check my role and **Moderate Members**.",
                 ephemeral=True,
             )
             return
         except discord.HTTPException as e:
-            await interaction.followup.send(
-                f"Could not unmute: {e.text or 'Discord API error'}",
+            await self._followup(
+                interaction,
+                content=f"Could not unmute: {e.text or 'Discord API error'}",
                 ephemeral=True,
             )
             return
@@ -248,7 +285,7 @@ class Moderation(commands.Cog):
             color=discord.Color.green(),
         )
         embed.set_footer(text=f"Unmuted by {interaction.user}")
-        await interaction.followup.send(embed=embed)
+        await self._followup(interaction, embed=embed)
 
     @app_commands.command(name="kick", description="Kick a user from the server")
     @app_commands.describe(member="User to kick", reason="Reason for kick")
@@ -260,30 +297,38 @@ class Moderation(commands.Cog):
         member: discord.Member,
         reason: str = "No reason provided",
     ):
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException:
+            return
+
         if member.bot:
-            await self._reply(interaction, content="You cannot kick bots.", ephemeral=True)
+            await self._followup(interaction, content="You cannot kick bots.", ephemeral=True)
             return
-
         if not interaction.user.guild_permissions.kick_members:
-            await self._reply(interaction, content="You need **Kick Members** permission.", ephemeral=True)
+            await self._followup(
+                interaction, content="You need **Kick Members** permission.", ephemeral=True
+            )
             return
-
-        blocked = self._bot_can_moderate(interaction, member)
+        blocked = await self._bot_can_moderate(interaction, member)
         if blocked:
-            await self._reply(interaction, content=blocked, ephemeral=True)
+            await self._followup(interaction, content=blocked, ephemeral=True)
             return
 
-        if not interaction.guild.me.guild_permissions.kick_members:
-            await self._reply(
+        me = await self._get_bot_member(interaction.guild)
+        if not me or not me.guild_permissions.kick_members:
+            await self._followup(
                 interaction, content="I need **Kick Members** permission.", ephemeral=True
             )
             return
 
-        await interaction.response.defer()
-
-        self.db.log_moderation(
-            member.id, interaction.guild.id, "kick", reason, interaction.user.id
-        )
+        try:
+            self.db.log_moderation(
+                member.id, interaction.guild.id, "kick", reason, interaction.user.id
+            )
+        except Exception as e:
+            await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)
+            return
 
         try:
             await member.send(
@@ -295,14 +340,16 @@ class Moderation(commands.Cog):
         try:
             await member.kick(reason=reason)
         except discord.Forbidden:
-            await interaction.followup.send(
-                "Could not kick — check my role position and **Kick Members** permission.",
+            await self._followup(
+                interaction,
+                content="Could not kick — check my role position and **Kick Members**.",
                 ephemeral=True,
             )
             return
         except discord.HTTPException as e:
-            await interaction.followup.send(
-                f"Could not kick: {e.text or 'Discord API error'}",
+            await self._followup(
+                interaction,
+                content=f"Could not kick: {e.text or 'Discord API error'}",
                 ephemeral=True,
             )
             return
@@ -314,7 +361,7 @@ class Moderation(commands.Cog):
         )
         embed.add_field(name="Reason", value=reason)
         embed.set_footer(text=f"Kicked by {interaction.user}")
-        await interaction.followup.send(embed=embed)
+        await self._followup(interaction, embed=embed)
 
     @app_commands.command(name="ban", description="Ban a user from the server")
     @app_commands.describe(member="User to ban", reason="Reason for ban")
@@ -326,30 +373,38 @@ class Moderation(commands.Cog):
         member: discord.Member,
         reason: str = "No reason provided",
     ):
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException:
+            return
+
         if member.bot:
-            await self._reply(interaction, content="You cannot ban bots.", ephemeral=True)
+            await self._followup(interaction, content="You cannot ban bots.", ephemeral=True)
             return
-
         if not interaction.user.guild_permissions.ban_members:
-            await self._reply(interaction, content="You need **Ban Members** permission.", ephemeral=True)
+            await self._followup(
+                interaction, content="You need **Ban Members** permission.", ephemeral=True
+            )
             return
-
-        blocked = self._bot_can_moderate(interaction, member)
+        blocked = await self._bot_can_moderate(interaction, member)
         if blocked:
-            await self._reply(interaction, content=blocked, ephemeral=True)
+            await self._followup(interaction, content=blocked, ephemeral=True)
             return
 
-        if not interaction.guild.me.guild_permissions.ban_members:
-            await self._reply(
+        me = await self._get_bot_member(interaction.guild)
+        if not me or not me.guild_permissions.ban_members:
+            await self._followup(
                 interaction, content="I need **Ban Members** permission.", ephemeral=True
             )
             return
 
-        await interaction.response.defer()
-
-        self.db.log_moderation(
-            member.id, interaction.guild.id, "ban", reason, interaction.user.id
-        )
+        try:
+            self.db.log_moderation(
+                member.id, interaction.guild.id, "ban", reason, interaction.user.id
+            )
+        except Exception as e:
+            await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)
+            return
 
         try:
             await member.send(
@@ -361,14 +416,16 @@ class Moderation(commands.Cog):
         try:
             await member.ban(reason=reason)
         except discord.Forbidden:
-            await interaction.followup.send(
-                "Could not ban — check my role position and **Ban Members** permission.",
+            await self._followup(
+                interaction,
+                content="Could not ban — check my role position and **Ban Members**.",
                 ephemeral=True,
             )
             return
         except discord.HTTPException as e:
-            await interaction.followup.send(
-                f"Could not ban: {e.text or 'Discord API error'}",
+            await self._followup(
+                interaction,
+                content=f"Could not ban: {e.text or 'Discord API error'}",
                 ephemeral=True,
             )
             return
@@ -380,19 +437,27 @@ class Moderation(commands.Cog):
         )
         embed.add_field(name="Reason", value=reason)
         embed.set_footer(text=f"Banned by {interaction.user}")
-        await interaction.followup.send(embed=embed)
+        await self._followup(interaction, embed=embed)
 
     @app_commands.command(name="unban", description="Unban a user by ID")
     @app_commands.describe(user_id="ID of user to unban")
     @app_commands.default_permissions(ban_members=True)
     @app_commands.guild_only()
     async def unban_user(self, interaction: discord.Interaction, user_id: str):
-        if not interaction.user.guild_permissions.ban_members:
-            await self._reply(interaction, content="You need **Ban Members** permission.", ephemeral=True)
+        try:
+            await interaction.response.defer()
+        except discord.HTTPException:
             return
 
-        if not interaction.guild.me.guild_permissions.ban_members:
-            await self._reply(
+        if not interaction.user.guild_permissions.ban_members:
+            await self._followup(
+                interaction, content="You need **Ban Members** permission.", ephemeral=True
+            )
+            return
+
+        me = await self._get_bot_member(interaction.guild)
+        if not me or not me.guild_permissions.ban_members:
+            await self._followup(
                 interaction, content="I need **Ban Members** permission.", ephemeral=True
             )
             return
@@ -400,12 +465,10 @@ class Moderation(commands.Cog):
         try:
             user_id_int = int(user_id)
         except ValueError:
-            await self._reply(
+            await self._followup(
                 interaction, content="Invalid user ID. Use numbers only.", ephemeral=True
             )
             return
-
-        await interaction.response.defer()
 
         try:
             user = await self.bot.fetch_user(user_id_int)
@@ -413,39 +476,44 @@ class Moderation(commands.Cog):
             self.db.log_moderation(
                 user_id_int, interaction.guild.id, "unban", moderator_id=interaction.user.id
             )
-            await interaction.followup.send(f"{user} has been unbanned.")
+            await self._followup(interaction, content=f"{user} has been unbanned.")
         except discord.NotFound:
-            await interaction.followup.send("User not found in ban list.", ephemeral=True)
+            await self._followup(interaction, content="User not found in ban list.", ephemeral=True)
         except discord.Forbidden:
-            await interaction.followup.send(
-                "Could not unban — I need **Ban Members** permission.", ephemeral=True
+            await self._followup(
+                interaction,
+                content="Could not unban — I need **Ban Members** permission.",
+                ephemeral=True,
             )
         except discord.HTTPException as e:
-            await interaction.followup.send(
-                f"Could not unban: {e.text or 'Discord API error'}", ephemeral=True
+            await self._followup(
+                interaction,
+                content=f"Could not unban: {e.text or 'Discord API error'}",
+                ephemeral=True,
             )
 
     @app_commands.command(name="warnings", description="View warnings for a user")
     @app_commands.describe(member="User to check")
     @app_commands.guild_only()
     async def get_warnings(self, interaction: discord.Interaction, member: discord.Member):
-        target = member
         try:
-            warning_count = self.db.get_warnings(target.id, interaction.guild.id)
-            logs = self.db.get_user_logs(target.id, interaction.guild.id, 5)
+            await interaction.response.defer()
+        except discord.HTTPException:
+            return
+
+        try:
+            warning_count = self.db.get_warnings(member.id, interaction.guild.id)
+            logs = self.db.get_user_logs(member.id, interaction.guild.id, 5)
         except Exception as e:
             logger.error("Warnings DB error: %s", e, exc_info=True)
-            await self._reply(
-                interaction, content=f"Database error: {e}", ephemeral=True
-            )
+            await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)
             return
 
         embed = discord.Embed(
-            title=f"Warnings for {target}",
+            title=f"Warnings for {member}",
             description=f"Total warnings: {warning_count}/3",
             color=discord.Color.orange(),
         )
-
         if logs:
             log_text = ""
             for log in logs:
@@ -455,29 +523,35 @@ class Moderation(commands.Cog):
         else:
             embed.add_field(name="Recent Actions", value="No moderation history")
 
-        await interaction.response.send_message(embed=embed)
+        await self._followup(interaction, embed=embed)
 
     @app_commands.command(name="modlog", description="View moderation log for a user")
     @app_commands.describe(member="User to check")
     @app_commands.default_permissions(moderate_members=True)
     @app_commands.guild_only()
     async def modlog(self, interaction: discord.Interaction, member: discord.Member):
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.HTTPException:
+            return
+
         if not interaction.user.guild_permissions.moderate_members:
-            await self._reply(interaction, content="You need **Moderate Members** permission.", ephemeral=True)
+            await self._followup(
+                interaction, content="You need **Moderate Members** permission.", ephemeral=True
+            )
             return
 
         try:
             logs = self.db.get_user_logs(member.id, interaction.guild.id, 10)
         except Exception as e:
             logger.error("Modlog DB error: %s", e, exc_info=True)
-            await self._reply(interaction, content=f"Database error: {e}", ephemeral=True)
+            await self._followup(interaction, content=f"Database error: {e}", ephemeral=True)
             return
 
         embed = discord.Embed(
             title=f"Moderation Log — {member}",
             color=discord.Color.blue(),
         )
-
         if logs:
             for i, log in enumerate(logs, 1):
                 action, reason, timestamp = log
@@ -489,7 +563,7 @@ class Moderation(commands.Cog):
         else:
             embed.description = "No moderation history for this user."
 
-        await interaction.response.send_message(embed=embed)
+        await self._followup(interaction, embed=embed, ephemeral=True)
 
 
 async def setup(bot):
