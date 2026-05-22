@@ -3,11 +3,12 @@ import sqlite3
 import json
 from datetime import datetime
 from pathlib import Path
+from config import DATABASE_PATH
 
 class Database:
-    def __init__(self, db_path: str = "data/bot_data.db"):
-        self.db_path = db_path
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, db_path: str = None):
+        self.db_path = db_path or DATABASE_PATH
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self.init_db()
 
     def get_connection(self):

@@ -1,14 +1,19 @@
 """Configuration module for the Universal Bot."""
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+BASE_DIR = Path(__file__).resolve().parent
+load_dotenv(BASE_DIR / ".env")
 
 # Bot Token
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "your_token_here")
 
-# Database
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./data/bot_data.db")
+# SQLite path (use DATABASE_PATH — Railway sets DATABASE_URL for Postgres addons)
+DATABASE_PATH = os.getenv(
+    "DATABASE_PATH",
+    str(BASE_DIR / "data" / "bot_data.db"),
+)
 
 # Moderation Settings
 MODERATION_CONFIG = {
