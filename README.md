@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Universal Moderation Bot 🤖
 
 A comprehensive Discord moderation and logging bot built with discord.py. Features user verification, message moderation, automatic warnings, and complete audit logging.
