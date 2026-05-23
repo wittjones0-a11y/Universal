@@ -29,14 +29,9 @@ intents.members = True
 intents.guilds = True
 intents.moderation = True
 
-bot = commands.Bot(command_prefix="/", intents=intents, help_command=None)
+from bot_helpers import defer_command, slash_send
 
-# Commands that must defer immediately (before handler runs)
-_DEFER_COMMANDS = frozenset({
-    "warn", "mute", "unmute", "kick", "ban", "unban", "warnings", "modlog",
-    "logs", "logsetup", "setuplogs",
-})
-_EPHEMERAL_DEFER = frozenset({"modlog", "logs", "logsetup", "setuplogs"})
+bot = commands.Bot(command_prefix="/", intents=intents, help_command=None)
 
 
 def start_health_server():
@@ -78,9 +73,10 @@ async def sync_slash_commands():
     }
     missing = expected - set(local_commands)
     if missing:
-        logger.error("Missing commands in tree (cog load failed?): %s", sorted(missing))
+        logger.error("Missing commands in tree: %s", sorted(missing))
 
-    guild_id = os.getenv("DISCORD_GUILD_ID")
+    from config import DISCORD_GUILD_ID as guild_id_cfg
+    guild_id = os.getenv("DISCORD_GUILD_ID") or guild_id_cfg
     try:
         synced = await bot.tree.sync()
         logger.info(
@@ -131,30 +127,24 @@ async def load_cogs():
     if failed:
         raise RuntimeError(f"Failed to load cogs: {', '.join(failed)}")
 
-    mod_cmds = [c.name for c in bot.tree.get_commands() if c.name in (
-        "warn", "mute", "unmute", "kick", "ban", "unban", "warnings", "modlog"
-    )]
-    if len(mod_cmds) < 8:
-        raise RuntimeError(
-            f"Moderation commands missing from tree ({len(mod_cmds)}/8): {mod_cmds}"
-        )
+    expected = {
+        "help", "ping", "warn", "mute", "unmute", "kick", "ban", "unban",
+        "warnings", "modlog", "verify", "verified", "verificationsetup",
+        "logs", "logsetup", "setuplogs", "botstatus",
+    }
+    registered = set(_tree_command_names())
+    missing = expected - registered
+    if missing:
+        raise RuntimeError(f"Commands failed to register: {sorted(missing)}")
+    logger.info("All %s commands registered", len(expected))
 
 
 @bot.tree.interaction_check
-async def defer_slash_commands(interaction: discord.Interaction) -> bool:
-    """Defer before handlers run so Discord always gets a response within 3 seconds."""
-    cmd = interaction.command
-    if not cmd or cmd.name not in _DEFER_COMMANDS:
+async def defer_all_slash_commands(interaction: discord.Interaction) -> bool:
+    """Acknowledge every slash command within 3 seconds before handler code runs."""
+    if interaction.type != discord.InteractionType.application_command:
         return True
-    if interaction.response.is_done():
-        return True
-    try:
-        await interaction.response.defer(ephemeral=cmd.name in _EPHEMERAL_DEFER)
-        logger.info("Deferred /%s for %s", cmd.name, interaction.user)
-    except discord.HTTPException as e:
-        logger.error("Failed to defer /%s: %s", cmd.name, e)
-        return False
-    return True
+    return await defer_command(interaction)
 
 
 @bot.event
@@ -192,7 +182,8 @@ async def on_ready():
         except Exception as e:
             logger.error("Command sync failed on ready: %s", e, exc_info=True)
 
-    guild_id = os.getenv("DISCORD_GUILD_ID")
+    from config import DISCORD_GUILD_ID as guild_id_cfg
+    guild_id = os.getenv("DISCORD_GUILD_ID") or guild_id_cfg
     if guild_id:
         target = int(guild_id)
         in_guild = bot.get_guild(target)
@@ -254,10 +245,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         message = f"Discord error: {error.text or 'request failed'}"
 
     try:
-        if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
-        else:
-            await interaction.response.send_message(message, ephemeral=True)
+        await slash_send(interaction, content=message, ephemeral=True)
     except discord.HTTPException:
         pass
 
@@ -332,8 +320,9 @@ async def on_command_error(ctx, error):
 @bot.tree.command(name="ping", description="Test if the bot responds to slash commands")
 async def ping(interaction: discord.Interaction):
     latency_ms = round(bot.latency * 1000)
-    await interaction.response.send_message(
-        f"Pong! Latency: {latency_ms}ms — bot is online and responding.",
+    await slash_send(
+        interaction,
+        content=f"Pong! Latency: {latency_ms}ms — bot is online.",
         ephemeral=True,
     )
 
@@ -343,13 +332,13 @@ async def ping(interaction: discord.Interaction):
 async def botstatus(interaction: discord.Interaction):
     """Help debug Railway / permission / command issues."""
     if not interaction.guild:
-        await interaction.response.send_message("Use this in a server.", ephemeral=True)
+        await slash_send(interaction, content="Use this in a server.", ephemeral=True)
         return
 
     guild = interaction.guild
     me = guild.me
     perms = me.guild_permissions if me else None
-    configured_guild = os.getenv("DISCORD_GUILD_ID", "(not set)")
+    from config import DISCORD_GUILD_ID as configured_guild
 
     lines = [
         f"**Server:** {guild.name}",
@@ -380,7 +369,7 @@ async def botstatus(interaction: discord.Interaction):
         color=discord.Color.blue(),
     )
     embed.set_footer(text="After changing Railway variables, redeploy and wait ~30s")
-    await interaction.response.send_message(embed=embed, ephemeral=True)
+    await slash_send(interaction, embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="help", description="Show all available commands")
@@ -407,9 +396,9 @@ async def help_command(interaction: discord.Interaction):
 
     embed.add_field(
         name="Verification Commands",
-        value="/verify - Start verification process\n"
-        "/verified - Check verification status\n"
-        "/verificationsetup - Setup verification channel (Admin)",
+        value="/verify - Start verification (post code in verify channel)\n"
+        "/verified <member> - Check verification status\n"
+        "/verificationsetup <channel> - Set verify channel (Admin)",
         inline=False,
     )
 

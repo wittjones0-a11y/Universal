@@ -10,7 +10,7 @@ load_dotenv(BASE_DIR / ".env")
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN", "your_token_here")
 
 # Guild ID for instant slash-command sync (set in Railway Variables)
-DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID", "")
+DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID", "1371012886884782220")
 
 # SQLite path (use DATABASE_PATH — Railway sets DATABASE_URL for Postgres addons)
 def _default_database_path() -> str:

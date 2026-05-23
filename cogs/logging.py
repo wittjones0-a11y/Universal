@@ -1,8 +1,16 @@
 """Activity logging cog."""
+import logging
+from typing import Optional
+
 import discord
-from discord.ext import commands
 from discord import app_commands
+from discord.ext import commands
+
+from bot_helpers import slash_send
 from database import Database
+
+logger = logging.getLogger(__name__)
+
 
 class Logging(commands.Cog):
     def __init__(self, bot):
@@ -11,188 +19,105 @@ class Logging(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
-        """Log messages from non-bot users."""
         if message.author.bot or not message.guild:
             return
-
-        # Don't log bot commands (slash commands don't trigger message events)
         if message.content.startswith("/"):
             return
 
-        await self.db.run(self.db.add_user, message.author.id, message.guild.id)
-        await self.db.run(
-            self.db.log_message,
-            message.author.id,
-            message.guild.id,
-            message.channel.id,
-            message.id,
-            message.content,
-        )
-
-    @commands.Cog.listener()
-    async def on_message_delete(self, message: discord.Message):
-        """Log deleted messages."""
-        if message.author.bot or not message.guild:
-            return
-
-        embed = discord.Embed(
-            title="🗑️ Message Deleted",
-            description=f"**Author:** {message.author}\n**Content:** {message.content}",
-            color=discord.Color.orange()
-        )
-        embed.add_field(name="Channel", value=message.channel.mention)
-        embed.set_footer(text=f"User ID: {message.author.id}")
-
-        print(f"[AUDIT] Message deleted by {message.author}: {message.content}")
-
-    @commands.Cog.listener()
-    async def on_message_edit(self, before: discord.Message, after: discord.Message):
-        """Log edited messages."""
-        if before.author.bot or not before.guild:
-            return
-
-        if before.content == after.content:
-            return
-
-        embed = discord.Embed(
-            title="✏️ Message Edited",
-            description=f"**Author:** {before.author}",
-            color=discord.Color.blue()
-        )
-        embed.add_field(name="Before", value=before.content or "No content", inline=False)
-        embed.add_field(name="After", value=after.content or "No content", inline=False)
-        embed.add_field(name="Channel", value=before.channel.mention)
-        embed.set_footer(text=f"User ID: {before.author.id}")
-
-        print(f"[AUDIT] Message edited by {before.author}")
-
-    @commands.Cog.listener()
-    async def on_member_update(self, before: discord.Member, after: discord.Member):
-        """Log member updates (roles, nicknames, etc)."""
-        if before.guild is None:
-            return
-
-        # Check for nickname change
-        if before.nick != after.nick:
-            print(f"[AUDIT] {after} nickname changed from '{before.nick}' to '{after.nick}'")
-
-        # Check for role changes
-        if before.roles != after.roles:
-            added_roles = [role for role in after.roles if role not in before.roles]
-            removed_roles = [role for role in before.roles if role not in after.roles]
-
-            if added_roles:
-                print(f"[AUDIT] {after} gained roles: {', '.join([r.name for r in added_roles])}")
-
-            if removed_roles:
-                print(f"[AUDIT] {after} lost roles: {', '.join([r.name for r in removed_roles])}")
-
-    @commands.Cog.listener()
-    async def on_member_remove(self, member: discord.Member):
-        """Log member leaving."""
-        print(f"[AUDIT] {member} left the server")
-
-    @app_commands.command(name="logs", description="View activity logs")
-    @app_commands.describe(member="User to check")
-    async def view_logs(self, interaction: discord.Interaction, member: discord.Member = None):
-        """View message logs for a user."""
-        if not interaction.user.guild_permissions.moderate_members:
-            await interaction.followup.send(
-                "You don't have permission to use this command.", ephemeral=True
+        try:
+            await self.db.run(self.db.add_user, message.author.id, message.guild.id)
+            await self.db.run(
+                self.db.log_message,
+                message.author.id,
+                message.guild.id,
+                message.channel.id,
+                message.id,
+                message.content,
             )
-            return
+        except Exception as exc:
+            logger.warning("Message log failed: %s", exc)
 
-        if member is None:
-            member = interaction.user
-
-        # Fetch recent message logs from the database
+    @app_commands.command(name="logs", description="View activity logs for a user")
+    @app_commands.describe(member="User to check")
+    @app_commands.default_permissions(moderate_members=True)
+    @app_commands.guild_only()
+    async def view_logs(self, interaction: discord.Interaction, member: discord.Member):
         logs = await self.db.run(
             self.db.get_message_logs, member.id, interaction.guild.id, 10
         )
 
         embed = discord.Embed(
-            title=f"📨 Activity Logs - {member}",
-            color=discord.Color.blue()
+            title=f"Activity logs — {member.display_name}",
+            color=discord.Color.blue(),
         )
 
         if logs:
             for i, row in enumerate(logs, 1):
-                channel_id = row[0]
-                content = row[1] or "(no content)"
-                timestamp = row[2]
-                # Truncate content for embed
-                short = content if len(content) <= 190 else content[:187] + "..."
-                try:
-                    channel = interaction.guild.get_channel(channel_id)
-                    channel_name = channel.mention if channel else f"Channel ID {channel_id}"
-                except:
-                    channel_name = f"Channel ID {channel_id}"
-
+                channel_id, content, timestamp = row
+                short = (content or "(no content)")[:190]
+                channel = interaction.guild.get_channel(channel_id)
+                ch_label = channel.mention if channel else f"<#{channel_id}>"
                 embed.add_field(
-                    name=f"{i}. {channel_name}",
+                    name=f"{i}. {ch_label}",
                     value=f"{short}\n*{timestamp}*",
-                    inline=False
+                    inline=False,
                 )
         else:
-            embed.description = "No message logs found for this user."
+            embed.description = "No message logs for this user."
 
-        try:
-            await interaction.followup.send(embed=embed, ephemeral=True)
-        except Exception:
-            # fall back to send_message if followup fails
-            try:
-                await interaction.response.send_message(embed=embed, ephemeral=True)
-            except Exception as e:
-                print(f"[ERROR] Failed to send logs response: {e}")
+        await slash_send(interaction, embed=embed, ephemeral=True)
 
-    @app_commands.command(name="logsetup", description="Setup a channel for audit logs (Admin only)")
-    @app_commands.describe(channel="Channel to receive audit logs")
-    async def log_setup(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
-        """Wrapper for backwards-compatible command. Calls internal implementation."""
+    @app_commands.command(name="logsetup", description="Set the audit log channel (Admin)")
+    @app_commands.describe(channel="Channel for audit logs (defaults to current channel)")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def log_setup(
+        self,
+        interaction: discord.Interaction,
+        channel: Optional[discord.TextChannel] = None,
+    ):
         await self._do_log_setup(interaction, channel)
 
-    async def _do_log_setup(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
-        """Set the guild log channel where audit messages will be sent."""
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send(
-                "You must be an administrator to use this command.", ephemeral=True
-            )
-            return
+    @app_commands.command(name="setuplogs", description="Alias for /logsetup")
+    @app_commands.describe(channel="Channel for audit logs")
+    @app_commands.default_permissions(administrator=True)
+    @app_commands.guild_only()
+    async def setuplogs(
+        self,
+        interaction: discord.Interaction,
+        channel: Optional[discord.TextChannel] = None,
+    ):
+        await self._do_log_setup(interaction, channel)
 
-        if channel is None:
-            channel = interaction.channel
-
+    async def _do_log_setup(
+        self,
+        interaction: discord.Interaction,
+        channel: Optional[discord.TextChannel],
+    ):
+        target = channel or interaction.channel
         try:
-            await self.db.run(self.db.set_log_channel, interaction.guild.id, channel.id)
-
+            await self.db.run(
+                self.db.set_log_channel, interaction.guild.id, target.id
+            )
             embed = discord.Embed(
-                title="✅ Log Channel Set",
-                description=f"Audit log channel has been set to {channel.mention}",
-                color=discord.Color.green()
+                title="Log channel set",
+                description=f"Audit logs will go to {target.mention}.",
+                color=discord.Color.green(),
             )
-            await interaction.followup.send(embed=embed, ephemeral=True)
-
-            try:
-                info = discord.Embed(
-                    title="📌 Audit Logging Enabled",
-                    description="I'll post moderation and audit logs here.",
-                    color=discord.Color.blue()
+            await slash_send(interaction, embed=embed, ephemeral=True)
+            await target.send(
+                embed=discord.Embed(
+                    title="Audit logging enabled",
+                    description="Moderation events can be logged here.",
+                    color=discord.Color.blue(),
                 )
-                await channel.send(embed=info)
-            except Exception as e:
-                print(f"[ERROR] Failed to send test message to log channel: {e}")
-        except Exception as e:
-            print(f"[ERROR] Failed during log setup: {e}")
-            try:
-                await interaction.followup.send(f"❌ Failed to set log channel: {e}", ephemeral=True)
-            except Exception:
-                pass
+            )
+        except Exception as exc:
+            logger.error("logsetup failed: %s", exc, exc_info=True)
+            await slash_send(
+                interaction, content=f"Failed to set log channel: {exc}", ephemeral=True
+            )
 
-    # Backwards-compatible alias for older command name
-    @app_commands.command(name="setuplogs", description="(alias) Setup a channel for audit logs (Admin only)")
-    @app_commands.describe(channel="Channel to receive audit logs")
-    async def setuplogs(self, interaction: discord.Interaction, channel: discord.TextChannel = None):
-        await self._do_log_setup(interaction, channel)
 
 async def setup(bot):
     await bot.add_cog(Logging(bot))
