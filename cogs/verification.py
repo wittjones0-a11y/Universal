@@ -80,16 +80,12 @@ class Verification(commands.Cog):
         )
         embed.add_field(
             name="🎯 Your Code",
-            value=f"```
-{code}
-```",
+            value=f"```\n{code}\n```",
             inline=False
         )
         embed.add_field(
             name="📋 Roblox Username",
-            value=f"```
-{roblox_username}
-```",
+            value=f"```\n{roblox_username}\n```",
             inline=False
         )
         embed.add_field(
@@ -252,7 +248,7 @@ class Verification(commands.Cog):
         )
         embed.add_field(
             name="🔧 Settings",
-            value=f"Channel: {channel.mention}\nServer: {guild.name}",
+            value=f"Channel: {channel.mention}\nServer: {interaction.guild.name}",
             inline=False
         )
         embed.set_footer(text="Verification system is now active!")
