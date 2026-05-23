@@ -25,6 +25,7 @@ class RobloxUsernameModal(Modal, title='🎮 Roblox Verification'):
 
     async def on_submit(self, interaction: discord.Interaction):
         roblox_username = self.roblox_username.value.strip()
+        await interaction.response.defer(ephemeral=True)
         await self.verification_cog.start_verification_with_roblox(interaction, roblox_username)
 
 
@@ -80,16 +81,12 @@ class Verification(commands.Cog):
         )
         embed.add_field(
             name="🎯 Your Code",
-            value=f"```
-{code}
-```",
+            value=f"```{code}```",
             inline=False
         )
         embed.add_field(
             name="📋 Roblox Username",
-            value=f"```
-{roblox_username}
-```",
+            value=f"```{roblox_username}```",
             inline=False
         )
         embed.add_field(
