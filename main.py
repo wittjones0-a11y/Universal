@@ -69,7 +69,7 @@ async def sync_slash_commands():
 
     expected = {
         "help", "ping", "warn", "mute", "unmute", "kick", "ban", "unban", "warnings", "modlog",
-        "verify", "verified", "verificationsetup", "logs", "logsetup", "botstatus",
+        "role_add", "verify", "verified", "verificationsetup", "logs", "logsetup", "botstatus",
     }
     missing = expected - set(local_commands)
     if missing:
@@ -142,7 +142,7 @@ async def load_cogs():
 
     expected = {
         "help", "ping", "warn", "mute", "unmute", "kick", "ban", "unban",
-        "warnings", "modlog", "verify", "verified", "verificationsetup",
+        "warnings", "modlog", "role_add", "verify", "verified", "verificationsetup",
         "logs", "logsetup", "botstatus",
     }
     registered = set(_tree_command_names())
@@ -406,7 +406,8 @@ async def help_command(interaction: discord.Interaction):
         "`/ban` Ban a member\n"
         "`/unban` Unban by user ID\n"
         "`/warnings` View warning count\n"
-        "`/modlog` View moderation history",
+        "`/modlog` View moderation history\n"
+        "`/role_add` Add a role to a member",
         inline=False,
     )
 

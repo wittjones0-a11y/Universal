@@ -522,6 +522,65 @@ class Moderation(commands.Cog):
 
         await slash_send(interaction, embed=embed, ephemeral=True)
 
+    @app_commands.command(name="role_add", description="Add a role to a member")
+    @app_commands.describe(member="Member to give the role to", role="Role to add")
+    @app_commands.default_permissions(manage_roles=True)
+    @app_commands.guild_only()
+    async def role_add(
+        self,
+        interaction: discord.Interaction,
+        member: discord.Member,
+        role: discord.Role,
+    ):
+        if not interaction.user.guild_permissions.manage_roles:
+            await slash_send(
+                interaction, content="You need **Manage Roles** permission.", ephemeral=True
+            )
+            return
+
+        me = await self._get_bot_member(interaction.guild)
+        if me is None:
+            await slash_send(
+                interaction, content="Bot member data unavailable — try again.", ephemeral=True
+            )
+            return
+
+        if role >= me.top_role:
+            await slash_send(
+                interaction,
+                content="I cannot assign this role — move my role above it in Server Settings.",
+                ephemeral=True,
+            )
+            return
+
+        if role in member.roles:
+            await slash_send(
+                interaction,
+                content=f"{member.mention} already has the {role.mention} role.",
+                ephemeral=True,
+            )
+            return
+
+        try:
+            await member.add_roles(role, reason=f"Added by {interaction.user}")
+        except discord.Forbidden:
+            await slash_send(
+                interaction, content="I don't have permission to assign that role.", ephemeral=True
+            )
+            return
+        except discord.HTTPException as e:
+            logger.error("Role add error: %s", e, exc_info=True)
+            await slash_send(interaction, content=f"Failed to add role: {e}", ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title="✅ Role Added",
+            description=f"Added {role.mention} to {member.mention}",
+            color=discord.Color.from_rgb(87, 242, 135),
+        )
+        embed.set_footer(text=f"Added by {interaction.user}")
+        await slash_send(interaction, embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(Moderation(bot))
