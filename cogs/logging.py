@@ -78,17 +78,6 @@ class Logging(commands.Cog):
     ):
         await self._do_log_setup(interaction, channel)
 
-    @app_commands.command(name="setuplogs", description="Alias for /logsetup")
-    @app_commands.describe(channel="Channel for audit logs")
-    @app_commands.default_permissions(administrator=True)
-    @app_commands.guild_only()
-    async def setuplogs(
-        self,
-        interaction: discord.Interaction,
-        channel: Optional[discord.TextChannel] = None,
-    ):
-        await self._do_log_setup(interaction, channel)
-
     async def _do_log_setup(
         self,
         interaction: discord.Interaction,
@@ -100,16 +89,22 @@ class Logging(commands.Cog):
                 self.db.set_log_channel, interaction.guild.id, target.id
             )
             embed = discord.Embed(
-                title="Log channel set",
-                description=f"Audit logs will go to {target.mention}.",
-                color=discord.Color.green(),
+                title="✅ Log Channel Configured",
+                description=f"Audit logs will now be sent to {target.mention}.",
+                color=discord.Color.from_rgb(87, 242, 135),
             )
+            embed.add_field(
+                name="📋 Logged Activity",
+                value="Messages, moderation actions, warnings, mutes, kicks, bans, and unbans.",
+                inline=False,
+            )
+            embed.set_footer(text="Logging system is active")
             await slash_send(interaction, embed=embed, ephemeral=True)
             await target.send(
                 embed=discord.Embed(
-                    title="Audit logging enabled",
-                    description="Moderation events can be logged here.",
-                    color=discord.Color.blue(),
+                    title="📜 Audit Log Channel",
+                    description="This channel is now configured to receive server audit logs.",
+                    color=discord.Color.from_rgb(88, 101, 242),
                 )
             )
         except Exception as exc:

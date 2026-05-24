@@ -234,6 +234,7 @@ class Verification(commands.Cog):
     async def verification_setup(
         self, interaction: discord.Interaction, channel: discord.TextChannel
     ):
+        guild = interaction.guild
         await self.db.run(
             self.db.set_verification_channel, interaction.guild.id, channel.id
         )

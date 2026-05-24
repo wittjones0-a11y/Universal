@@ -69,7 +69,7 @@ async def sync_slash_commands():
 
     expected = {
         "help", "ping", "warn", "mute", "unmute", "kick", "ban", "unban", "warnings", "modlog",
-        "verify", "verified", "verificationsetup", "logs", "logsetup", "setuplogs", "botstatus",
+        "verify", "verified", "verificationsetup", "logs", "logsetup", "botstatus",
     }
     missing = expected - set(local_commands)
     if missing:
@@ -78,14 +78,14 @@ async def sync_slash_commands():
     from config import DISCORD_GUILD_ID as guild_id_cfg
     guild_id = os.getenv("DISCORD_GUILD_ID") or guild_id_cfg
     try:
-        synced = await bot.tree.sync()
-        logger.info(
-            "Synced %s global command(s): %s",
-            len(synced),
-            sorted(cmd.name for cmd in synced),
-        )
         if guild_id:
             guild = discord.Object(id=int(guild_id))
+            commands = list(bot.tree.get_commands())
+            bot.tree.clear_commands(guild=None)
+            cleared = await bot.tree.sync()
+            logger.info("Cleared %s global command(s) to prevent duplicates", len(cleared))
+            for command in commands:
+                bot.tree.add_command(command)
             bot.tree.copy_global_to(guild=guild)
             guild_synced = await bot.tree.sync(guild=guild)
             logger.info(
@@ -95,8 +95,11 @@ async def sync_slash_commands():
                 sorted(cmd.name for cmd in guild_synced),
             )
         else:
+            synced = await bot.tree.sync()
             logger.info(
-                "Tip: set DISCORD_GUILD_ID in Railway for faster command updates in your server."
+                "Synced %s global command(s): %s",
+                len(synced),
+                sorted(cmd.name for cmd in synced),
             )
     except discord.HTTPException as e:
         logger.error("Failed to sync commands (HTTP %s): %s", e.status, e.text, exc_info=True)
@@ -130,7 +133,7 @@ async def load_cogs():
     expected = {
         "help", "ping", "warn", "mute", "unmute", "kick", "ban", "unban",
         "warnings", "modlog", "verify", "verified", "verificationsetup",
-        "logs", "logsetup", "setuplogs", "botstatus",
+        "logs", "logsetup", "botstatus",
     }
     registered = set(_tree_command_names())
     missing = expected - registered
@@ -320,11 +323,14 @@ async def on_command_error(ctx, error):
 @bot.tree.command(name="ping", description="Test if the bot responds to slash commands")
 async def ping(interaction: discord.Interaction):
     latency_ms = round(bot.latency * 1000)
-    await slash_send(
-        interaction,
-        content=f"Pong! Latency: {latency_ms}ms — bot is online.",
-        ephemeral=True,
+    embed = discord.Embed(
+        title="🏓 Pong!",
+        description="The bot is online and responding.",
+        color=discord.Color.from_rgb(87, 242, 135),
     )
+    embed.add_field(name="📡 Latency", value=f"`{latency_ms}ms`", inline=True)
+    embed.set_footer(text="Universal Hangout Bot")
+    await slash_send(interaction, embed=embed, ephemeral=True)
 
 
 @bot.tree.command(name="botstatus", description="Show bot diagnostics (admin)")
@@ -364,9 +370,9 @@ async def botstatus(interaction: discord.Interaction):
     lines.append(f"**Moderation commands loaded:** {len(mod_cmds)}/8 — {', '.join(f'`/{c}`' for c in mod_cmds)}")
 
     embed = discord.Embed(
-        title="Bot status",
+        title="🤖 Bot Status",
         description="\n".join(lines),
-        color=discord.Color.blue(),
+        color=discord.Color.from_rgb(88, 101, 242),
     )
     embed.set_footer(text="After changing Railway variables, redeploy and wait ~30s")
     await slash_send(interaction, embed=embed, ephemeral=True)
@@ -376,43 +382,46 @@ async def botstatus(interaction: discord.Interaction):
 async def help_command(interaction: discord.Interaction):
     """Show help information."""
     embed = discord.Embed(
-        title="Universal Moderation Bot - Commands",
-        description="All available slash commands:",
-        color=discord.Color.blue(),
+        title="📚 Universal Bot Commands",
+        description="Here are the available slash commands, organized by category.",
+        color=discord.Color.from_rgb(88, 101, 242),
     )
 
     embed.add_field(
-        name="Moderation Commands",
-        value="/warn - Warn a user\n"
-        "/mute - Mute a user\n"
-        "/unmute - Unmute a user\n"
-        "/kick - Kick a user\n"
-        "/ban - Ban a user\n"
-        "/unban - Unban a user\n"
-        "/warnings - View user warnings\n"
-        "/modlog - View moderation history",
+        name="🛡️ Moderation",
+        value="`/warn` Warn a member\n"
+        "`/mute` Timeout a member\n"
+        "`/unmute` Remove a timeout\n"
+        "`/kick` Kick a member\n"
+        "`/ban` Ban a member\n"
+        "`/unban` Unban by user ID\n"
+        "`/warnings` View warning count\n"
+        "`/modlog` View moderation history",
         inline=False,
     )
 
     embed.add_field(
-        name="Verification Commands",
-        value="/verify - Start verification (post code in verify channel)\n"
-        "/verified <member> - Check verification status\n"
-        "/verificationsetup <channel> - Set verify channel (Admin)",
+        name="✅ Verification",
+        value="`/verify` Start Roblox verification\n"
+        "`/verified` Check a member's verification status\n"
+        "`/verificationsetup` Set the verification channel",
         inline=False,
     )
 
     embed.add_field(
-        name="Logging Commands",
-        value="/logs - View activity logs\n/logsetup - Set audit log channel (Admin)",
+        name="📜 Logging",
+        value="`/logs` View recent message activity\n"
+        "`/logsetup` Set the audit log channel",
         inline=False,
     )
 
     embed.add_field(
-        name="Diagnostics",
-        value="/ping - Test bot response\n/botstatus - Check permissions and sync (Admin)",
+        name="⚙️ Utilities",
+        value="`/ping` Check bot latency\n"
+        "`/botstatus` View bot diagnostics",
         inline=False,
     )
+    embed.set_footer(text="Tip: start typing / to see command options")
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
