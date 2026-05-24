@@ -82,8 +82,18 @@ async def sync_slash_commands():
             guild = discord.Object(id=int(guild_id))
             commands = list(bot.tree.get_commands())
             bot.tree.clear_commands(guild=None)
-            cleared = await bot.tree.sync()
-            logger.info("Cleared %s global command(s) to prevent duplicates", len(cleared))
+            cleared_global = await bot.tree.sync()
+            logger.info(
+                "Cleared %s global command(s) to prevent duplicates",
+                len(cleared_global),
+            )
+            bot.tree.clear_commands(guild=guild)
+            cleared_guild = await bot.tree.sync(guild=guild)
+            logger.info(
+                "Cleared %s guild command(s) from %s to remove cached duplicates",
+                len(cleared_guild),
+                guild_id,
+            )
             for command in commands:
                 bot.tree.add_command(command)
             bot.tree.copy_global_to(guild=guild)
