@@ -89,23 +89,27 @@ class Moderation(commands.Cog):
             return
 
         embed = discord.Embed(
-            title="User Warned",
-            description=f"{member.mention} has been warned.",
-            color=discord.Color.orange(),
+            title="⚠️ User Warned",
+            description=f"{member.mention} has received a warning.",
+            color=discord.Color.from_rgb(255, 183, 77),
+            timestamp=datetime.utcnow(),
         )
-        embed.add_field(name="Reason", value=reason)
-        embed.add_field(name="Warnings", value=f"{warning_count}/3")
-        embed.set_footer(text=f"Warned by {interaction.user}")
+        embed.add_field(name="📋 Reason", value=f"```{reason}```", inline=False)
+        embed.add_field(name="📊 Warning Count", value=f"`{warning_count}/3`", inline=True)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"Warned by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
         await slash_send(interaction, embed=embed)
 
         try:
             dm_embed = discord.Embed(
-                title="Warning",
-                description=f"You have been warned in {interaction.guild.name}",
-                color=discord.Color.orange(),
+                title="⚠️ Warning Received",
+                description=f"You have been warned in **{interaction.guild.name}**.",
+                color=discord.Color.from_rgb(255, 183, 77),
+                timestamp=datetime.utcnow(),
             )
-            dm_embed.add_field(name="Reason", value=reason)
-            dm_embed.add_field(name="Total Warnings", value=f"{warning_count}/3")
+            dm_embed.add_field(name="📋 Reason", value=f"```{reason}```", inline=False)
+            dm_embed.add_field(name="📊 Your Warnings", value=f"`{warning_count}/3`", inline=True)
+            dm_embed.set_footer(text="Please follow the server rules to avoid further action.")
             await member.send(embed=dm_embed)
         except discord.HTTPException:
             pass
@@ -202,12 +206,15 @@ class Moderation(commands.Cog):
 
         minutes = max(duration // 60, 1)
         embed = discord.Embed(
-            title="User Muted",
-            description=f"{member.mention} has been muted for {minutes} minute(s).",
-            color=discord.Color.red(),
+            title="🔇 User Muted",
+            description=f"{member.mention} has been temporarily muted.",
+            color=discord.Color.from_rgb(237, 66, 69),
+            timestamp=datetime.utcnow(),
         )
-        embed.add_field(name="Reason", value=reason)
-        embed.set_footer(text=f"Muted by {interaction.user}")
+        embed.add_field(name="⏱️ Duration", value=f"`{minutes} minute(s)`", inline=True)
+        embed.add_field(name="📋 Reason", value=f"```{reason}```", inline=False)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"Muted by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
         await slash_send(interaction, embed=embed)
 
     @app_commands.command(name="unmute", description="Unmute a user")
@@ -253,11 +260,13 @@ class Moderation(commands.Cog):
             return
 
         embed = discord.Embed(
-            title="User Unmuted",
-            description=f"{member.mention} has been unmuted.",
-            color=discord.Color.green(),
+            title="🔊 User Unmuted",
+            description=f"{member.mention} can now speak again.",
+            color=discord.Color.from_rgb(87, 242, 135),
+            timestamp=datetime.utcnow(),
         )
-        embed.set_footer(text=f"Unmuted by {interaction.user}")
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"Unmuted by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
         await slash_send(interaction, embed=embed)
 
     @app_commands.command(name="kick", description="Kick a user from the server")
@@ -324,12 +333,14 @@ class Moderation(commands.Cog):
             return
 
         embed = discord.Embed(
-            title="User Kicked",
-            description=f"{member} has been kicked.",
-            color=discord.Color.red(),
+            title="👢 User Kicked",
+            description=f"{member.mention} has been kicked from the server.",
+            color=discord.Color.from_rgb(237, 66, 69),
+            timestamp=datetime.utcnow(),
         )
-        embed.add_field(name="Reason", value=reason)
-        embed.set_footer(text=f"Kicked by {interaction.user}")
+        embed.add_field(name="📋 Reason", value=f"```{reason}```", inline=False)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"Kicked by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
         await slash_send(interaction, embed=embed)
 
     @app_commands.command(name="ban", description="Ban a user from the server")
@@ -396,12 +407,14 @@ class Moderation(commands.Cog):
             return
 
         embed = discord.Embed(
-            title="User Banned",
-            description=f"{member} has been banned.",
-            color=discord.Color.dark_red(),
+            title="🚫 User Banned",
+            description=f"{member.mention} has been permanently banned.",
+            color=discord.Color.from_rgb(139, 0, 0),
+            timestamp=datetime.utcnow(),
         )
-        embed.add_field(name="Reason", value=reason)
-        embed.set_footer(text=f"Banned by {interaction.user}")
+        embed.add_field(name="📋 Reason", value=f"```{reason}```", inline=False)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"Banned by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
         await slash_send(interaction, embed=embed)
 
     @app_commands.command(name="unban", description="Unban a user by ID")
@@ -437,7 +450,15 @@ class Moderation(commands.Cog):
                 self.db.log_moderation,
                 user_id_int, interaction.guild.id, "unban", moderator_id=interaction.user.id,
             )
-            await slash_send(interaction, content=f"{user} has been unbanned.")
+            embed = discord.Embed(
+                title="✅ User Unbanned",
+                description=f"**{user}** has been unbanned and can rejoin the server.",
+                color=discord.Color.from_rgb(87, 242, 135),
+                timestamp=datetime.utcnow(),
+            )
+            embed.set_thumbnail(url=user.display_avatar.url if user.display_avatar else None)
+            embed.set_footer(text=f"Unbanned by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
+            await slash_send(interaction, embed=embed)
         except discord.NotFound:
             await slash_send(interaction, content="User not found in ban list.", ephemeral=True)
         except discord.Forbidden:
@@ -457,31 +478,53 @@ class Moderation(commands.Cog):
     @app_commands.describe(member="User to check")
     @app_commands.guild_only()
     async def get_warnings(self, interaction: discord.Interaction, member: discord.Member):
+        await interaction.response.defer(ephemeral=True)
+
         try:
-            warning_count = await self.db.run(
-                self.db.get_warnings, member.id, interaction.guild.id
-            )
-            logs = await self.db.run(
-                self.db.get_user_logs, member.id, interaction.guild.id, 5
+            # Run database queries in parallel for faster response
+            warning_count, logs = await asyncio.gather(
+                self.db.run(self.db.get_warnings, member.id, interaction.guild.id),
+                self.db.run(self.db.get_user_logs, member.id, interaction.guild.id, 5)
             )
         except Exception as e:
             logger.error("Warnings DB error: %s", e, exc_info=True)
             await slash_send(interaction, content=f"Database error: {e}", ephemeral=True)
             return
 
+        # Determine color based on warning count
+        if warning_count == 0:
+            color = discord.Color.from_rgb(87, 242, 135)
+            status_emoji = "✅"
+        elif warning_count == 1:
+            color = discord.Color.from_rgb(255, 183, 77)
+            status_emoji = "⚠️"
+        elif warning_count == 2:
+            color = discord.Color.from_rgb(255, 152, 0)
+            status_emoji = "⚠️"
+        else:
+            color = discord.Color.from_rgb(237, 66, 69)
+            status_emoji = "🚨"
+
         embed = discord.Embed(
-            title=f"Warnings for {member}",
-            description=f"Total warnings: {warning_count}/3",
-            color=discord.Color.orange(),
+            title=f"{status_emoji} Warning Status — {member.display_name}",
+            description=f"**Total Warnings:** `{warning_count}/3`",
+            color=color,
+            timestamp=datetime.utcnow(),
         )
+        embed.set_thumbnail(url=member.display_avatar.url)
+
         if logs:
             log_text = ""
-            for log in logs:
+            for i, log in enumerate(logs[:3], 1):
                 action, reason, _timestamp = log
-                log_text += f"**{action.upper()}** — {reason or 'No reason'}\n"
-            embed.add_field(name="Recent Actions", value=log_text)
+                action_emoji = {"warn": "⚠️", "mute": "🔇", "kick": "👢", "ban": "🚫", "unmute": "🔊", "unban": "✅"}.get(action, "📝")
+                log_text += f"{i}. {action_emoji} **{action.upper()}** — {reason or 'No reason'}\n"
+            embed.add_field(name="📋 Recent Actions", value=log_text, inline=False)
         else:
-            embed.add_field(name="Recent Actions", value="No moderation history")
+            embed.add_field(name="📋 Recent Actions", value="*No moderation history*", inline=False)
+
+        if warning_count >= 2:
+            embed.add_field(name="🚨 Notice", value="*2 more warnings will result in an automatic mute.*", inline=False)
 
         await slash_send(interaction, embed=embed)
 
@@ -496,6 +539,8 @@ class Moderation(commands.Cog):
             )
             return
 
+        await interaction.response.defer(ephemeral=True)
+
         try:
             logs = await self.db.run(
                 self.db.get_user_logs, member.id, interaction.guild.id, 10
@@ -505,20 +550,37 @@ class Moderation(commands.Cog):
             await slash_send(interaction, content=f"Database error: {e}", ephemeral=True)
             return
 
+        action_colors = {
+            "warn": discord.Color.from_rgb(255, 183, 77),
+            "mute": discord.Color.from_rgb(237, 66, 69),
+            "unmute": discord.Color.from_rgb(87, 242, 135),
+            "kick": discord.Color.from_rgb(237, 66, 69),
+            "ban": discord.Color.from_rgb(139, 0, 0),
+            "unban": discord.Color.from_rgb(87, 242, 135),
+        }
+        action_emojis = {"warn": "⚠️", "mute": "🔇", "unmute": "🔊", "kick": "👢", "ban": "🚫", "unban": "✅"}
+
         embed = discord.Embed(
-            title=f"Moderation Log — {member}",
-            color=discord.Color.blue(),
+            title=f"📋 Moderation History — {member.display_name}",
+            description=f"**User ID:** `{member.id}`\n**Total Records:** `{len(logs)}`" if logs else "*No moderation history for this user.*",
+            color=discord.Color.from_rgb(88, 101, 242),
+            timestamp=datetime.utcnow(),
         )
+        embed.set_thumbnail(url=member.display_avatar.url)
+
         if logs:
-            for i, log in enumerate(logs, 1):
-                action, reason, timestamp = log
+            for i, log in enumerate(logs[:6], 1):  # Limit to 6 entries
+                action, reason, log_timestamp = log
+                emoji = action_emojis.get(action, "📝")
                 embed.add_field(
-                    name=f"{i}. {action.upper()}",
-                    value=f"**Reason:** {reason or 'None'}\n**Time:** {timestamp}",
+                    name=f"{i}. {emoji} {action.upper()}",
+                    value=f"```{reason or 'No reason provided'}```\n🕐 {log_timestamp}",
                     inline=False,
                 )
+            if len(logs) > 6:
+                embed.set_footer(text=f"Showing 6 of {len(logs)} records • Use /warnings for a summary")
         else:
-            embed.description = "No moderation history for this user."
+            embed.set_footer(text="This user has a clean record")
 
         await slash_send(interaction, embed=embed, ephemeral=True)
 
@@ -577,8 +639,12 @@ class Moderation(commands.Cog):
             title="✅ Role Added",
             description=f"Added {role.mention} to {member.mention}",
             color=discord.Color.from_rgb(87, 242, 135),
+            timestamp=datetime.utcnow(),
         )
-        embed.set_footer(text=f"Added by {interaction.user}")
+        embed.add_field(name="👤 Member", value=member.mention, inline=True)
+        embed.add_field(name="🏷️ Role", value=role.mention, inline=True)
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"Added by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
         await slash_send(interaction, embed=embed)
 
 

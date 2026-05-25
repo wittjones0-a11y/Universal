@@ -270,20 +270,23 @@ async def on_guild_join(guild: discord.Guild):
 
     if guild.system_channel:
         embed = discord.Embed(
-            title="Universal Moderation Bot",
-            description="Thank you for inviting me! I'm here to help moderate your server.",
-            color=discord.Color.blue(),
+            title="🤖 Universal Bot",
+            description=f"Thank you for inviting me to **{guild.name}**! I'm here to help moderate your server.",
+            color=discord.Color.from_rgb(88, 101, 242),
+            timestamp=datetime.utcnow(),
         )
         embed.add_field(
-            name="Features",
-            value="Moderation, verification, activity logging, and audit logs",
+            name="🛡️ Features",
+            value="• Moderation (warn, mute, kick, ban)\n• Roblox verification system\n• Activity logging\n• Role management",
             inline=False,
         )
         embed.add_field(
-            name="Get Started",
-            value="Type `/help` to see available commands.",
+            name="🚀 Get Started",
+            value="Use `/help` to see all commands\nUse `/verificationsetup` to configure verification",
             inline=False,
         )
+        embed.set_thumbnail(url=bot.user.display_avatar.url)
+        embed.set_footer(text=f"Bot ID: {bot.user.id}")
         try:
             await guild.system_channel.send(embed=embed)
         except discord.HTTPException:
@@ -301,45 +304,68 @@ async def on_command_error(ctx, error):
     """Handle prefix command errors (slash commands use on_app_command_error)."""
     if isinstance(error, commands.MissingPermissions):
         embed = discord.Embed(
-            title="Permission Denied",
-            description="You don't have permission to use this command.",
-            color=discord.Color.red(),
+            title="🚫 Permission Denied",
+            description="You don't have the required permissions to use this command.",
+            color=discord.Color.from_rgb(237, 66, 69),
+            timestamp=datetime.utcnow(),
         )
+        embed.set_footer(text="Contact a server administrator if you need access")
         await ctx.send(embed=embed)
     elif isinstance(error, commands.MissingRequiredArgument):
         embed = discord.Embed(
-            title="Missing Argument",
-            description=f"Missing required argument: {error.param.name}",
-            color=discord.Color.red(),
+            title="⚠️ Missing Argument",
+            description=f"Missing required argument: `{error.param.name}`",
+            color=discord.Color.from_rgb(255, 183, 77),
+            timestamp=datetime.utcnow(),
         )
+        embed.set_footer(text=f"Use {ctx.prefix}help {ctx.command} for usage info")
         await ctx.send(embed=embed)
     elif isinstance(error, commands.BadArgument):
         embed = discord.Embed(
-            title="Bad Argument",
+            title="⚠️ Invalid Argument",
             description=str(error),
-            color=discord.Color.red(),
+            color=discord.Color.from_rgb(255, 183, 77),
+            timestamp=datetime.utcnow(),
         )
+        embed.set_footer(text="Check your input and try again")
         await ctx.send(embed=embed)
     else:
         logger.error(f"Command error: {error}")
         embed = discord.Embed(
-            title="Error",
-            description="An error occurred while processing your command.",
-            color=discord.Color.red(),
+            title="❌ Error",
+            description="An unexpected error occurred while processing your command.",
+            color=discord.Color.from_rgb(237, 66, 69),
+            timestamp=datetime.utcnow(),
         )
+        embed.set_footer(text="The error has been logged for review")
         await ctx.send(embed=embed)
 
 
 @bot.tree.command(name="ping", description="Test if the bot responds to slash commands")
 async def ping(interaction: discord.Interaction):
     latency_ms = round(bot.latency * 1000)
+
+    # Determine status color based on latency
+    if latency_ms < 100:
+        status_color = discord.Color.from_rgb(87, 242, 135)  # Green
+        status_text = "🟢 Excellent"
+    elif latency_ms < 200:
+        status_color = discord.Color.from_rgb(255, 183, 77)  # Yellow
+        status_text = "🟡 Good"
+    else:
+        status_color = discord.Color.from_rgb(237, 66, 69)  # Red
+        status_text = "🔴 High"
+
     embed = discord.Embed(
         title="🏓 Pong!",
-        description="The bot is online and responding.",
-        color=discord.Color.from_rgb(87, 242, 135),
+        description=f"The bot is online and responding.",
+        color=status_color,
+        timestamp=datetime.utcnow(),
     )
     embed.add_field(name="📡 Latency", value=f"`{latency_ms}ms`", inline=True)
-    embed.set_footer(text="Universal Hangout Bot")
+    embed.add_field(name="📊 Status", value=status_text, inline=True)
+    embed.set_thumbnail(url=bot.user.display_avatar.url)
+    embed.set_footer(text=f"{bot.user.name} v1.0")
     await slash_send(interaction, embed=embed, ephemeral=True)
 
 
@@ -380,10 +406,12 @@ async def botstatus(interaction: discord.Interaction):
     lines.append(f"**Moderation commands loaded:** {len(mod_cmds)}/8 — {', '.join(f'`/{c}`' for c in mod_cmds)}")
 
     embed = discord.Embed(
-        title="🤖 Bot Status",
+        title="🤖 Bot Diagnostics",
         description="\n".join(lines),
         color=discord.Color.from_rgb(88, 101, 242),
+        timestamp=datetime.utcnow(),
     )
+    embed.set_thumbnail(url=bot.user.display_avatar.url)
     embed.set_footer(text="After changing Railway variables, redeploy and wait ~30s")
     await slash_send(interaction, embed=embed, ephemeral=True)
 
@@ -393,46 +421,58 @@ async def help_command(interaction: discord.Interaction):
     """Show help information."""
     embed = discord.Embed(
         title="📚 Universal Bot Commands",
-        description="Here are the available slash commands, organized by category.",
+        description=f"**{len(bot.tree.get_commands())} commands available**\nUse `/` to see command options with autocompletion.",
         color=discord.Color.from_rgb(88, 101, 242),
+        timestamp=datetime.utcnow(),
     )
+    embed.set_thumbnail(url=bot.user.display_avatar.url)
 
     embed.add_field(
         name="🛡️ Moderation",
-        value="`/warn` Warn a member\n"
-        "`/mute` Timeout a member\n"
-        "`/unmute` Remove a timeout\n"
-        "`/kick` Kick a member\n"
-        "`/ban` Ban a member\n"
-        "`/unban` Unban by user ID\n"
-        "`/warnings` View warning count\n"
-        "`/modlog` View moderation history\n"
-        "`/role_add` Add a role to a member",
-        inline=False,
+        value="`/warn` — Warn a member\n"
+        "`/mute` — Timeout a member\n"
+        "`/unmute` — Remove a timeout\n"
+        "`/kick` — Kick a member\n"
+        "`/ban` — Ban a member\n"
+        "`/unban` — Unban by user ID\n"
+        "`/warnings` — View warning count\n"
+        "`/modlog` — View moderation history\n"
+        "`/role_add` — Add a role to a member",
+        inline=True,
     )
 
     embed.add_field(
         name="✅ Verification",
-        value="`/verify` Start Roblox verification\n"
-        "`/verified` Check a member's verification status\n"
-        "`/verificationsetup` Set the verification channel",
-        inline=False,
+        value="`/verify` — Start Roblox verification\n"
+        "`/verified` — Check verification status\n"
+        "`/verificationsetup` — Set verification channel",
+        inline=True,
     )
 
     embed.add_field(
         name="📜 Logging",
-        value="`/logs` View recent message activity\n"
-        "`/logsetup` Set the audit log channel",
-        inline=False,
+        value="`/logs` — View message activity\n"
+        "`/logsetup` — Set audit log channel",
+        inline=True,
     )
 
     embed.add_field(
         name="⚙️ Utilities",
-        value="`/ping` Check bot latency\n"
-        "`/botstatus` View bot diagnostics",
+        value="`/ping` — Check bot latency\n"
+        "`/botstatus` — View bot diagnostics\n"
+        "`/help` — Show this help message",
+        inline=True,
+    )
+
+    embed.add_field(
+        name="📖 Quick Tips",
+        value="• Most moderation commands require `Moderate Members` permission\n"
+        "• Verification links Discord accounts to Roblox usernames\n"
+        "• Use `/botstatus` to check bot diagnostics",
         inline=False,
     )
-    embed.set_footer(text="Tip: start typing / to see command options")
+
+    embed.set_footer(text=f"{bot.user.name} • Type / to start using commands", icon_url=bot.user.display_avatar.url)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
 

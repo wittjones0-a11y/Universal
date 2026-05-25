@@ -2,6 +2,7 @@
 import asyncio
 import logging
 import random
+from datetime import datetime
 from typing import Optional
 
 import discord
@@ -51,13 +52,20 @@ class Verification(commands.Cog):
             title="👋 Welcome to the Server!",
             description=f"Hey {member.mention}! We're excited to have you here.\n\nTo get started and unlock all channels, please complete the verification process by using the `/verify` command.",
             color=discord.Color.from_rgb(88, 101, 242),
+            timestamp=datetime.utcnow(),
         )
         embed.add_field(
             name="📝 Quick Start",
             value="1. Use `/verify` in any channel\n2. Enter your Roblox username\n3. Post the verification code in the designated channel",
             inline=False
         )
-        embed.set_footer(text="Need help? Contact a staff member.")
+        embed.add_field(
+            name="⏱️ Time Limit",
+            value="You have 5 minutes to complete verification once started.",
+            inline=False
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(text=f"Joined {member.guild.name}", icon_url=member.guild.icon.url if member.guild.icon else None)
         try:
             await member.send(embed=embed)
         except discord.HTTPException:
@@ -78,6 +86,7 @@ class Verification(commands.Cog):
             title="🔐 Your Verification Code",
             description=f"Please post the code below in {channel.mention} to complete your verification.",
             color=discord.Color.from_rgb(88, 101, 242),
+            timestamp=datetime.utcnow(),
         )
         embed.add_field(
             name="🎯 Your Code",
@@ -156,6 +165,7 @@ class Verification(commands.Cog):
             title="✅ Verification Complete!",
             description=f"Congratulations {member.mention}! You now have full access to the server.",
             color=discord.Color.from_rgb(87, 242, 135),
+            timestamp=datetime.utcnow(),
         )
         done.add_field(
             name="🎮 Roblox Username",
@@ -178,6 +188,7 @@ class Verification(commands.Cog):
             title="✅ Verification Successful",
             description="You have been successfully verified and your nickname has been updated!",
             color=discord.Color.from_rgb(87, 242, 135),
+            timestamp=datetime.utcnow(),
         )
         embed.add_field(
             name="🏷️ Your New Nickname",
@@ -198,7 +209,10 @@ class Verification(commands.Cog):
                 title="✅ Already Verified",
                 description="You have already completed the verification process and have full access to the server!",
                 color=discord.Color.from_rgb(87, 242, 135),
+                timestamp=datetime.utcnow(),
             )
+            embed.set_thumbnail(url=user.display_avatar.url)
+            embed.set_footer(text=f"Verified in {guild.name}", icon_url=guild.icon.url if guild.icon else None)
             await slash_send(interaction, embed=embed, ephemeral=True)
             return
 
@@ -210,15 +224,19 @@ class Verification(commands.Cog):
     async def check_verified(
         self, interaction: discord.Interaction, member: discord.Member
     ):
+        await interaction.response.defer(ephemeral=True)
+
         is_verified = await self.db.run(
             self.db.is_verified, member.id, interaction.guild.id
         )
         status = "Verified" if is_verified else "Not verified"
         embed = discord.Embed(
             title=f"{'✅' if is_verified else '❌'} Verification Status — {member.display_name}",
-            description=f"**Status:** {status}\n\n**User ID:** `{member.id}`\n**Joined:** {member.joined_at.strftime('%B %d, %Y') if member.joined_at else 'N/A'}",
+            description=f"**Status:** `{status}`\n\n**User ID:** `{member.id}`\n**Joined:** {member.joined_at.strftime('%B %d, %Y') if member.joined_at else 'N/A'}",
             color=discord.Color.from_rgb(87, 242, 135) if is_verified else discord.Color.from_rgb(237, 66, 69),
+            timestamp=datetime.utcnow(),
         )
+        embed.set_thumbnail(url=member.display_avatar.url)
         if is_verified:
             embed.add_field(
                 name="🎮 Roblox Account",
@@ -242,28 +260,35 @@ class Verification(commands.Cog):
             title="⚙️ Verification Channel Configured",
             description=f"The verification system has been set up successfully!\n\nMembers will now verify in {channel.mention}.",
             color=discord.Color.from_rgb(87, 242, 135),
+            timestamp=datetime.utcnow(),
         )
         embed.add_field(
             name="📋 How It Works",
-            value="1. User runs `/verify` command\n2. Bot asks for their Roblox username\n3. Bot generates a unique verification code\n4. User posts the code in this channel\n5. Bot verifies and renames them to `Discord (Roblox)`",
+            value="1️⃣ User runs `/verify` command\n2️⃣ Bot asks for their Roblox username\n3️⃣ Bot generates a unique verification code\n4️⃣ User posts the code in this channel\n5️⃣ Bot verifies and renames them to `Discord (Roblox)`",
             inline=False
         )
         embed.add_field(
             name="🔧 Settings",
-            value=f"Channel: {channel.mention}\nServer: {guild.name}",
+            value=f"📍 Channel: {channel.mention}\n🖥️ Server: {guild.name}",
             inline=False
         )
-        embed.set_footer(text="Verification system is now active!")
+        embed.set_footer(text=f"Configured by {interaction.user.display_name}", icon_url=interaction.user.display_avatar.url)
         await slash_send(interaction, embed=embed, ephemeral=True)
 
         info = discord.Embed(
             title="🔐 Verification Channel",
             description="This is the designated verification channel. Please use `/verify` in any server channel to start the verification process, then post your code here.",
             color=discord.Color.from_rgb(88, 101, 242),
+            timestamp=datetime.utcnow(),
         )
         info.add_field(
             name="📝 Instructions",
-            value="1. Run `/verify` anywhere in the server\n2. Enter your Roblox username when prompted\n3. Copy the verification code you receive\n4. Paste the code in this channel to complete verification",
+            value="1️⃣ Run `/verify` anywhere in the server\n2️⃣ Enter your Roblox username when prompted\n3️⃣ Copy the verification code you receive\n4️⃣ Paste the code in this channel to complete verification",
+            inline=False
+        )
+        info.add_field(
+            name="⏱️ Time Limit",
+            value="You have 5 minutes to complete verification once you receive the code.",
             inline=False
         )
         info.set_footer(text="Staff members monitor this channel for verification codes")
